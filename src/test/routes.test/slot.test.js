@@ -1,10 +1,10 @@
 // src/test/routes.test/slot.test.js
 
 const request = require('supertest');
-const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const app = require('../../../app'); // Adjust path to your main app file
 const slotController = require('../../controllers/slot.controllers');
+const { v4: uuidv4 } = require('uuid');
 
 // --- Mock Controller and Middleware ---
 jest.mock('../../controllers/slot.controllers');
@@ -48,7 +48,7 @@ jest.mock('../../middleware/validate', () => ({
 describe('Slot Routes (/api/slot)', () => {
 
     let adminToken, tutorToken, studentToken;
-    const mockSlotId = new mongoose.Types.ObjectId().toString();
+    const mockSlotId = uuidv4();
     const { roles } = require('../../constants/sequelizetableconstants');
 
     beforeAll(() => {

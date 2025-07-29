@@ -1,10 +1,10 @@
 // src/test/routes.test/student.test.js
 
 const request = require('supertest');
-const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const app = require('../../../app');
 const studentController = require('../../controllers/student.controllers');
+const { v4: uuidv4 } = require('uuid');
 
 // --- Mock Controller and Middleware ---
 jest.mock('../../controllers/student.controllers');
@@ -42,8 +42,8 @@ jest.mock('../../middleware/multer', () => ({
 describe('Student Routes (/api/student)', () => {
 
     let adminToken, tutorToken, studentToken;
-    const mockStudentId = new mongoose.Types.ObjectId().toString();
-    const mockTutorId = new mongoose.Types.ObjectId().toString();
+    const mockStudentId = uuidv4();
+    const mockTutorId = uuidv4();
     // FIX: Import roles here for use within the tests themselves
     const { roles } = require('../../constants/sequelizetableconstants');
 

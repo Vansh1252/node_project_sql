@@ -1,10 +1,9 @@
 const request = require('supertest');
-const mongoose = require('mongoose');
-const { MongoMemoryServer } = require('mongodb-memory-server');
 const jwt = require('jsonwebtoken');
 const app = require('../../../app'); // Adjust path to your main app file
 const { roles } = require('../../constants/sequelizetableconstants');
 const AppError = require('../../utils/AppError'); // FIX: Import AppError
+const { v4: uuidv4 } = require('uuid');
 
 // Mock the service layer to isolate route/controller logic
 jest.mock('../../services/user.services', () => ({
@@ -31,15 +30,12 @@ const generateToken = (id, role) => {
 };
 
 beforeAll(async () => {
-    mongoServer = await MongoMemoryServer.create();
-    const mongoUri = mongoServer.getUri();
-    await mongoose.connect(mongoUri);
 
     // Create mock IDs
-    adminId = new mongoose.Types.ObjectId().toString();
-    tutorId = new mongoose.Types.ObjectId().toString();
-    studentId = new mongoose.Types.ObjectId().toString();
-    slotId = new mongoose.Types.ObjectId().toString();
+    adminId = uuidv4();
+    tutorId = uuidv4();
+    studentId = uuidv4();
+    slotId = uuidv4();
 
     // Generate tokens for each role
     adminToken = `Bearer ${generateToken(adminId, roles.ADMIN)}`;
@@ -47,33 +43,29 @@ beforeAll(async () => {
     studentToken = `Bearer ${generateToken(studentId, roles.STUDENT)}`;
 });
 
-afterAll(async () => {
-    await mongoose.disconnect();
-    await mongoServer.stop();
-});
 
 beforeEach(() => {
     jest.clearAllMocks();
 });
 
- describe('User Routes (/api/auth)', () => {
-        it('POST /register - should register a user successfully', async () => {
-            userServices.registerUser.mockResolvedValue({ statusCode: 201, message: 'User registered' });
-            const res = await request(app)
-                .post('/api/auth/register') 
-                .send({ fullName: 'Test', email: 'test@example.com', password: 'Password@123', role: 'admin' });
-            expect(res.statusCode).toBe(201);
-        });
-
-        it('GET /me - should fail for unauthenticated user', async () => {
-            const res = await request(app).get('/api/auth/me'); 
-            expect(res.statusCode).toBe(401);
-        });
-
-        it('GET /dashboard/admin - should be forbidden for non-admin user', async () => {
-            const res = await request(app)
-                .get('/api/auth/dashboard/admin') 
-                .set('Authorization', tutorToken);
-            expect(res.statusCode).toBe(403);
-        });
+describe('User Routes (/api/auth)', () => {
+    it('POST /register - should register a user successfully', async () => {
+        userServices.registerUser.mockResolvedValue({ statusCode: 201, message: 'User registered' });
+        const res = await request(app)
+            .post('/api/auth/register')
+            .send({ fullName: 'Test', email: 'test@example.com', password: 'Password@123', role: 'admin' });
+        expect(res.statusCode).toBe(201);
     });
+
+    it('GET /me - should fail for unauthenticated user', async () => {
+        const res = await request(app).get('/api/auth/me');
+        expect(res.statusCode).toBe(401);
+    });
+
+    it('GET /dashboard/admin - should be forbidden for non-admin user', async () => {
+        const res = await request(app)
+            .get('/api/auth/dashboard/admin')
+            .set('Authorization', tutorToken);
+        expect(res.statusCode).toBe(403);
+    });
+});
