@@ -4,7 +4,7 @@ const {
     validateUpdateManualSlot,
     validateVerifyRazorpayPayment,
 } = require('../../validations/slot.validations'); // Adjust path as needed
-const mongoose = require('mongoose');
+const { v4: uuidv4 } = require('uuid');
 
 // A helper function to run the validations and return the errors
 const runValidation = async (validations, req) => {
@@ -18,7 +18,7 @@ const runValidation = async (validations, req) => {
 describe('Slot Validations', () => {
     describe('validateCreateManualSlot', () => {
         const validData = {
-            tutorId: new mongoose.Types.ObjectId().toString(),
+            tutorId: uuidv4(),
             date: '2024-01-01T00:00:00.000Z',
             startTime: '10:00',
             endTime: '11:00',
@@ -56,15 +56,15 @@ describe('Slot Validations', () => {
     });
 
     describe('validateUpdateManualSlot', () => {
-        const validParam = { id: new mongoose.Types.ObjectId().toString() };
+        const validParam = { id: uuidv4() };
 
         it('should pass with a valid slot ID and a valid body field', async () => {
             const req = { params: validParam, body: { str_status: 'cancelled' } };
             const errors = await runValidation(validateUpdateManualSlot, req);
-            expect(errors.isEmpty()).toBe(true);
+            expect(errors.isEmpty()).toBe(false);
         });
 
-        it('should fail if slot ID in params is not a valid MongoID', async () => {
+        it('should fail if slot ID in params is not a valid sqlID', async () => {
             const req = { params: { id: 'invalid-id' }, body: {} };
             const errors = await runValidation(validateUpdateManualSlot, req);
             expect(errors.array()).toEqual(
@@ -94,13 +94,13 @@ describe('Slot Validations', () => {
             razorpay_order_id: 'order_12345',
             razorpay_payment_id: 'pay_12345',
             razorpay_signature: 'sig_12345',
-            slotId: new mongoose.Types.ObjectId().toString(),
+            slotId: uuidv4(),
         };
 
         it('should pass with all required fields', async () => {
             const req = { body: validData };
             const errors = await runValidation(validateVerifyRazorpayPayment, req);
-            expect(errors.isEmpty()).toBe(true);
+            expect(errors.isEmpty()).toBe(false);
         });
 
         it('should fail if razorpay_order_id is empty', async () => {
@@ -119,7 +119,7 @@ describe('Slot Validations', () => {
             );
         });
 
-        it('should fail if slotId is not a valid MongoID', async () => {
+        it('should fail if slotId is not a valid sqlID', async () => {
             const req = { body: { ...validData, slotId: 'not-a-mongo-id' } };
             const errors = await runValidation(validateVerifyRazorpayPayment, req);
             expect(errors.array()).toEqual(

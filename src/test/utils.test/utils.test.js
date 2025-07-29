@@ -85,19 +85,6 @@ jest.mock('../../services/slot.services', () => ({
     generateWeeklySlotsForTutor: jest.fn(),
 }));
 
-// Mock for mongoose
-jest.mock('mongoose', () => ({
-    connect: jest.fn(),
-    connection: {
-        // Mock connection object if needed
-    },
-    Types: {
-        ObjectId: {
-            isValid: jest.fn(),
-        },
-    },
-}));
-
 // Mock for Razorpay (if used)
 jest.mock('razorpay', () => {
     return jest.fn().mockImplementation(() => ({
@@ -114,7 +101,6 @@ const { getIO } = require('../../../socket');
 const mailer = require('../../utils/mailer');
 const AppError = require('../../utils/AppError');
 const moment = require('moment');
-const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 const randomPassword = require('../../utils/randompassword');
 const jwt = require('jsonwebtoken');

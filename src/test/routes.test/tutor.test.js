@@ -1,10 +1,10 @@
 // src/test/routes.test/tutor.test.js
 
 const request = require('supertest');
-const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const app = require('../../../app'); // Adjust path to your main app file
 const tutorController = require('../../controllers/tutor.controllers');
+const { v4: uuidv4 } = require('uuid');
 
 // --- Mock Controller and Middleware ---
 jest.mock('../../controllers/tutor.controllers');
@@ -43,8 +43,8 @@ jest.mock('../../middleware/validate', () => ({
 describe('Tutor Routes (/api/tutor)', () => {
 
     let adminToken, tutorToken, studentToken;
-    const mockTutorId = new mongoose.Types.ObjectId().toString();
-    const mockStudentId = new mongoose.Types.ObjectId().toString();
+    const mockTutorId = uuidv4();
+    const mockStudentId = uuidv4();
     const { roles } = require('../../constants/sequelizetableconstants');
 
     beforeAll(() => {

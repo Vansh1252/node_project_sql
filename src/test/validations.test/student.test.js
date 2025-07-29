@@ -3,7 +3,8 @@ const {
     createStudentValidation,
     updateStudentValidation,
 } = require('../../validations/students.validations'); // Adjust path as needed
-const mongoose = require('mongoose');
+const { v4: uuidv4 } = require('uuid');
+
 // A helper function to run the validations and return the errors
 const runValidation = async (validations, req) => {
     // Run all validation chains
@@ -48,8 +49,6 @@ describe('Student Validations', () => {
             };
             const errors = await runValidation(createStudentValidation, req);
             expect(errors.isEmpty()).toBe(true);
-            // const errorMessages = errors.array().map(e => e.msg);
-            // expect(errorMessages).toContain('First name is required');
         });
 
         it('should fail if email is invalid', async () => {
