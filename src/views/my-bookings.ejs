@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>My Bookings</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 30px;
+      background-color: #f0f2f5;
+    }
+
+    h2 {
+      color: #0a74da;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+      background: white;
+    }
+
+    th, td {
+      padding: 12px 15px;
+      text-align: left;
+      border-bottom: 1px solid #ddd;
+    }
+
+    th {
+      background-color: #0a74da;
+      color: white;
+    }
+
+    tr:hover {
+      background-color: #f1f1f1;
+    }
+
+    .status {
+      padding: 5px 10px;
+      border-radius: 4px;
+      font-weight: bold;
+    }
+
+    .booked {
+      background-color: #d1e7dd;
+      color: #0f5132;
+    }
+
+    .cancelled {
+      background-color: #f8d7da;
+      color: #842029;
+    }
+
+    .completed {
+      background-color: #cff4fc;
+      color: #055160;
+    }
+
+    .no-bookings {
+      margin-top: 30px;
+      font-size: 18px;
+      color: #888;
+    }
+  </style>
+</head>
+<body>
+  <h2>My Booked Slots</h2>
+
+  <% if (slots.length > 0) { %>
+    <table>
+      <thead>
+        <tr>
+          <th>Tutor</th>
+          <th>Date</th>
+          <th>Time</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% slots.forEach(slot => { %>
+          <tr>
+            <td><%= slot.tutorName || "N/A" %></td>
+            <td><%= new Date(slot.dt_date).toLocaleDateString() %></td>
+            <td><%= slot.str_startTime %> - <%= slot.str_endTime %></td>
+            <td><span class="status <%= slot.str_status %>"><%= slot.str_status %></span></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  <% } else { %>
+    <div class="no-bookings">No bookings found.</div>
+  <% } %>
+</body>
+</html>

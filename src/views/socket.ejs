@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Socket.io Notification Test</title>
+  <style>
+    #notification {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background-color: #4caf50;
+      color: white;
+      padding: 15px;
+      border-radius: 5px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <h1>Socket.io Notification Test</h1>
+  <button onclick="sendPing()">Send Ping</button>
+  <div id="notification"></div>
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io('http://localhost:3000');
+    socket.on('connect', () => {
+      console.log('Connected to server:', socket.id);
+      showNotification('Connected to server!');
+    });
+    socket.on('connect_error', (error) => {
+      console.error('Connection error:', error.message);
+      showNotification('Connection failed: ' + error.message, 'error');
+    });
+    socket.on('test-message', (msg) => {
+      console.log('Received from server:', msg);
+      showNotification(msg);
+      if (Notification.permission === 'granted') {
+        new Notification('New Message', { body: msg });
+      }
+    });
+    function sendPing() {
+      socket.emit('client-ping', 'Hello from client!');
+      showNotification('Ping sent to server!');
+    }
+    function showNotification(message, type = 'success') {
+      const notification = document.getElementById('notification');
+      notification.textContent = message;
+      notification.style.backgroundColor = type === 'error' ? '#f44336' : '#4caf50';
+      notification.style.display = 'block';
+      setTimeout(() => {
+        notification.style.display = 'none';
+      }, 3000);
+    }
+    if (Notification.permission !== 'granted') {
+      Notification.requestPermission();
+    }
+  </script>
+</body>
+</html>
