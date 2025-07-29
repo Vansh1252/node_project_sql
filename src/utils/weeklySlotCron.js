@@ -1,11 +1,12 @@
 const cron = require('node-cron');
-const tutorModel = require('../models/tutor.models');
+const { db } = require('../utils/db');
+
 const { generateWeeklySlotsForTutor } = require('../services/slot.services');
 
 const runWeeklySlotGenerator = async () => {
     try {
         console.log('📆 Weekly slot generation started...');
-        const tutors = await tutorModel.find({});
+        const tutors = await db.Tutor.findAll({});
 
         for (const tutor of tutors) {
             await generateWeeklySlotsForTutor(tutor);

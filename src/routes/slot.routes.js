@@ -5,6 +5,8 @@ const { Op } = require('sequelize');
 const slotController = require("../controllers/slot.controllers");
 const { protect, restrictTo } = require("../middleware/auth");
 const { roles } = require('../constants/sequelizetableconstants');
+const { validateCreateManualSlot, validateUpdateManualSlot, validateVerifyRazorpayPayment } = require('../validations/slot.validations');
+const { validate } = require("../middleware/validate");
 
 
 router.get('/view/:slotId', async (req, res, next) => {
@@ -82,7 +84,7 @@ router.get('/my-bookings', async (req, res, next) => {
 
 // backend API
 router.post("/payment/create-order", slotController.bookSlot);
-router.post('/payment/verify', slotController.verifyRazorpayPayment);
+router.post('/payment/verify', validateVerifyRazorpayPayment, validate, slotController.verifyRazorpayPayment);
 
 router.post("/reschedule", protect, restrictTo(roles.STUDENT), slotController.rescheduleSlot);
 router.post("/cancel/:id", protect, restrictTo(roles.STUDENT), slotController.cancelSlot);
@@ -91,8 +93,8 @@ router.get("/my", protect, restrictTo(roles.STUDENT), slotController.getMySlots)
 router.get("/available", protect, slotController.getAvailableSlotsForStudents);
 router.get("/details/:id", protect, restrictTo(roles.ADMIN, roles.TUTOR), slotController.getoneslot);
 
-router.post("/manual/create", protect, restrictTo(roles.ADMIN), slotController.createManualSlot);
-router.put("/manual/update/:id", protect, restrictTo(roles.ADMIN), slotController.updateManualSlot);
+router.post("/manual/create", protect, validateCreateManualSlot, validate, restrictTo(roles.ADMIN), slotController.createManualSlot);
+router.put("/manual/update/:id", protect, validateUpdateManualSlot, validate, restrictTo(roles.ADMIN), slotController.updateManualSlot);
 
 router.get("/", protect, restrictTo(roles.ADMIN, roles.TUTOR), slotController.getslotswithpagination);
 

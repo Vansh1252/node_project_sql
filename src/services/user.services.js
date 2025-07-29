@@ -196,7 +196,6 @@ exports.sendPasswordResetLink = async (email) => {
     });
 
     const resetUrl = `http://localhost:3000/reset-password/${resetToken}`;
-    console.log(resetToken); // For debugging, remove in production
 
     // Send reset email
     await mailer.sendMail({
@@ -296,7 +295,6 @@ exports.getAdminDashboard = async () => {
             }
         };
     } catch (error) {
-        console.error("Error fetching admin dashboard data:", error); // Log the actual error
         throw new AppError(`Failed to fetch dashboard data: ${error.message}`, 500);
     }
 };
@@ -427,7 +425,6 @@ exports.deleteUser = async (userId) => {
 
     } catch (error) {
         await transaction.rollback();
-        console.error("Error deleting user:", error);
         throw new AppError(`Failed to delete user: ${error.message}`, 500);
     }
 };

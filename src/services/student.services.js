@@ -1,12 +1,11 @@
-// src/services/student.services.js
 const bcrypt = require('bcrypt');
-const { db } = require('../utils/db'); // ✅ Import the db object
+const { db } = require('../utils/db');
 const AppError = require('../utils/AppError');
 const mailer = require('../utils/mailer');
-const { roles, userStatus } = require('../constants/sequelizetableconstants'); // ✅ Use Sequelize constants
+const { roles, userStatus } = require('../constants/sequelizetableconstants');
 const randompassword = require('../utils/randompassword');
-const { Op } = require('sequelize'); // ✅ Import Sequelize Operators
-const moment = require('moment'); // For date parsing and range generation
+const { Op } = require('sequelize');
+const moment = require('moment-timezone');
 const tutorServices = require('./tutor.services');
 
 // STUDENT CREATE SERVICE
@@ -29,7 +28,7 @@ exports.createstudentservice = async (req) => {
         try {
             const existing = await db.Student.findOne({
                 where: {
-                    [db.Sequelize.Op.or]: [
+                    [Op.or]: [
                         { int_studentNumber: studentNumber },
                         { str_email: email },
                         { str_phoneNumber: phoneNumber }
@@ -130,16 +129,13 @@ exports.createstudentservice = async (req) => {
 
         } catch (error) {
             if (!transaction.finished) await transaction.rollback();
-
             const isDeadlock = error?.parent?.code === 'ER_LOCK_DEADLOCK';
             if (isDeadlock && attempt < MAX_RETRIES) {
                 console.warn(`⚠️ Deadlock detected. Retrying attempt ${attempt}...`);
-                await new Promise(r => setTimeout(r, 200 * attempt)); // backoff
+                await new Promise(r => setTimeout(r, 200 * attempt));
                 continue;
             }
-
-            console.error(`❌ Error on attempt ${attempt}:`, error);
-            throw new AppError(`Failed to create student: ${error.message}`, 500);
+            throw error; // Propagate original error
         }
     }
 };
@@ -179,7 +175,7 @@ exports.updatestudentservice = async (req) => {
                 assignedTutor,
                 timezone,
                 sessionDuration,
-                avaliableTime, // [{ day: string, times: [string] }]
+                avaliableTime,
                 paymentMethodPaypal,
                 paymentMethodStripe,
                 transactionFee,
@@ -194,15 +190,14 @@ exports.updatestudentservice = async (req) => {
                 status: newStatus
             } = req.body;
 
-            // Check uniqueness excluding current student
             const existing = await db.Student.findOne({
                 where: {
-                    [db.Sequelize.Op.or]: [
+                    [Op.or]: [
                         { int_studentNumber: studentNumber },
                         { str_email: email },
                         { str_phoneNumber: phoneNumber }
                     ],
-                    id: { [db.Sequelize.Op.ne]: studentId }
+                    id: { [Op.ne]: studentId }
                 },
                 transaction
             });
@@ -210,7 +205,6 @@ exports.updatestudentservice = async (req) => {
                 throw new AppError("Another student with the same email, phone, or student number already exists.", 400);
             }
 
-            // Handle assigned tutor change (update many-to-many relations)
             const oldAssignedTutorId = student.objectId_assignedTutor;
             let newAssignedTutorInstance = null;
 
@@ -228,12 +222,11 @@ exports.updatestudentservice = async (req) => {
                     await newAssignedTutorInstance.addAssignedStudent(student, { transaction });
                 }
             } else if (oldAssignedTutorId && assignedTutor === null) {
-                // Tutor removed
                 const oldTutor = await db.Tutor.findByPk(oldAssignedTutorId, { transaction });
                 if (oldTutor) await oldTutor.removeAssignedStudent(student, { transaction });
             }
 
-            // Validate and update availability slots
+            const newAvailabilityTime = [];
             if (avaliableTime) {
                 if (!Array.isArray(avaliableTime)) {
                     throw new AppError("Selected slots must be an array", 400);
@@ -254,10 +247,9 @@ exports.updatestudentservice = async (req) => {
                     transaction
                 });
 
-                const newAvailabilitySlots = [];
                 for (const dayObj of avaliableTime) {
                     for (const slot of dayObj.slots) {
-                        newAvailabilitySlots.push({
+                        newAvailabilityTime.push({
                             obj_entityId: student.id,
                             obj_entityType: roles.STUDENT,
                             str_day: dayObj.day,
@@ -266,12 +258,11 @@ exports.updatestudentservice = async (req) => {
                         });
                     }
                 }
-                if (newAvailabilitySlots.length > 0) {
-                    await db.AvailabilitySlot.bulkCreate(newAvailabilitySlots, { transaction });
+                if (newAvailabilityTime.length > 0) {
+                    await db.AvailabilitySlot.bulkCreate(newAvailabilityTime, { transaction });
                 }
             }
 
-            // Profit check (optional)
             const currentTotalAmount = totalAmount ?? student.int_totalAmount;
             const currentTutorPayout = tutorPayout ?? student.int_tutorPayout;
             const currentTransactionFee = transactionFee ?? student.int_transactionFee;
@@ -288,10 +279,8 @@ exports.updatestudentservice = async (req) => {
                 }
             }
 
-            // Determine payment method preference
             const paymentMethod = paymentMethodPaypal || paymentMethodStripe || student.str_paymentMethod || "Unknown";
 
-            // Build update payload (omit undefined fields)
             const updateFields = {
                 int_studentNumber: studentNumber ?? student.int_studentNumber,
                 str_firstName: firstName ?? student.str_firstName,
@@ -326,7 +315,6 @@ exports.updatestudentservice = async (req) => {
 
             await student.update(updateFields, { transaction });
 
-            // Update linked User record if exists
             const user = await db.User.findOne({
                 where: { obj_profileId: studentId, obj_profileType: roles.STUDENT },
                 transaction
@@ -343,20 +331,17 @@ exports.updatestudentservice = async (req) => {
             }
 
             await transaction.commit();
-            return { statusCode: 200, message: "Student updated successfully", student };
+            return { statusCode: 200, message: "Student updated successfully", student, newAvailabilityTime };
 
         } catch (error) {
             if (!transaction.finished) await transaction.rollback();
-
             const isDeadlock = error?.parent?.code === 'ER_LOCK_DEADLOCK';
             if (isDeadlock && attempt < MAX_RETRIES) {
                 console.warn(`⚠️ Deadlock detected. Retrying attempt ${attempt}...`);
-                await new Promise(r => setTimeout(r, 200 * attempt)); // backoff
+                await new Promise(r => setTimeout(r, 200 * attempt));
                 continue;
             }
-
-            console.error(`❌ Error on attempt ${attempt}:`, error);
-            throw new AppError(`Failed to create student: ${error.message}`, 500);
+            throw error; // Propagate original error
         }
     }
 };
@@ -406,7 +391,7 @@ exports.getonestudentservice = async (req) => {
             : null,
         timezone: student.str_timezone,
         sessionDuration: student.int_sessionDuration,
-        avaliableTime: student.arr_weeklyAvailability, // Correct alias here
+        avaliableTime: student.arr_weeklyAvailability,
         paymentMethod: student.str_paymentMethod,
         transactionFee: student.int_transactionFee,
         totalAmount: student.int_totalAmount,
@@ -425,7 +410,6 @@ exports.getonestudentservice = async (req) => {
 };
 
 // GET STUDENTS WITH PAGINATION SERVICE
-
 exports.getonewithpaginationservice = async (req) => {
     const { page = 1, limit = 10, name = '', status: queryStatus, date, tutorId } = req.query;
     const userId = req.user?.id;
@@ -443,7 +427,7 @@ exports.getonewithpaginationservice = async (req) => {
     const filter = {};
 
     if (name && typeof name === 'string') {
-        filter.str_firstName = { [Op.like]: `%${name}%` };  // Use Op.like for MySQL
+        filter.str_firstName = { [Op.like]: `%${name}%` };
     }
     if (queryStatus) {
         filter.str_status = queryStatus;
@@ -470,7 +454,7 @@ exports.getonewithpaginationservice = async (req) => {
         include: [
             {
                 model: db.Tutor,
-                as: 'obj_assignedTutor',  // Make sure this matches your model association alias
+                as: 'obj_assignedTutor',
                 attributes: ['str_firstName', 'str_lastName'],
                 required: false
             }
@@ -514,7 +498,6 @@ exports.deletestudentservice = async (req) => {
             throw new AppError("Student not found", 404);
         }
 
-        // Remove student from tutor's assignedStudents (many-to-many)
         if (student.objectId_assignedTutor) {
             const tutor = await db.Tutor.findByPk(student.objectId_assignedTutor, { transaction });
             if (tutor) {
@@ -522,28 +505,24 @@ exports.deletestudentservice = async (req) => {
             }
         }
 
-        // Delete AvailabilitySlots
         await db.AvailabilitySlot.destroy({
             where: { obj_entityId: studentId, obj_entityType: roles.STUDENT },
             transaction
         });
 
-        // Delete PaymentHistory records
         await db.PaymentHistory.destroy({
             where: { obj_studentId: studentId },
             transaction
         });
 
-        // Delete associated User account
         const user = await db.User.findOne({
-            where: { profileId: studentId, profileType: roles.STUDENT },
+            where: { obj_profileId: studentId, obj_profileType: roles.STUDENT },
             transaction
         });
         if (user) {
             await user.destroy({ transaction });
         }
 
-        // Delete student
         await student.destroy({ transaction });
 
         await transaction.commit();
@@ -551,8 +530,7 @@ exports.deletestudentservice = async (req) => {
 
     } catch (error) {
         await transaction.rollback();
-        console.error("Error deleting student:", error);
-        throw new AppError(`Failed to delete student: ${error.message}`, 500);
+        throw error; // Propagate original error
     }
 };
 
@@ -564,7 +542,7 @@ exports.statuschangeservice = async (studentId, req) => {
         throw new AppError("Unauthorized access", 401);
     }
 
-    const validStatuses = [status.ACTIVE, status.INACTIVE, status.PAUSED];
+    const validStatuses = [userStatus.ACTIVE, userStatus.INACTIVE, userStatus.PAUSED];
     if (!validStatuses.includes(newStatus)) {
         throw new AppError("Invalid status value", 400);
     }
@@ -578,8 +556,6 @@ exports.statuschangeservice = async (studentId, req) => {
 
         await student.update({ str_status: newStatus }, { transaction });
 
-        // Optional audit log here...
-
         await transaction.commit();
 
         await tutorServices.adjustTutorAvailability(studentId);
@@ -587,28 +563,24 @@ exports.statuschangeservice = async (studentId, req) => {
         return { statusCode: 200, message: "Status changed successfully!" };
     } catch (error) {
         await transaction.rollback();
-        console.error("Error changing student status:", error);
-        throw new AppError(`Failed to change student status: ${error.message}`, 500);
+        throw error; // Propagate original error
     }
 };
-
 
 // GET STUDENT ASSESSMENTS SERVICE
 exports.getAssessments = async (studentId) => {
     try {
         const student = await db.Student.findByPk(studentId, {
-            attributes: ['arr_assessments'] // Only fetch the assessments array
+            attributes: ['arr_assessments']
         });
         if (!student) {
             throw new AppError("Student not found", 404);
         }
         return { statusCode: 200, data: student.arr_assessments || [] };
     } catch (error) {
-        console.error("Error fetching assessments:", error);
-        throw new AppError(`Failed to fetch assessments: ${error.message}`, 500);
+        throw error; // Propagate original error
     }
 };
-
 
 // DELETE STUDENT ASSESSMENT SERVICE
 exports.deleteAssessments = async (studentId, filePath) => {
@@ -622,33 +594,19 @@ exports.deleteAssessments = async (studentId, filePath) => {
         let currentAssessments = student.arr_assessments || [];
         const initialLength = currentAssessments.length;
 
-        // Filter out the filePath
         currentAssessments = currentAssessments.filter(item => item !== filePath);
 
         if (currentAssessments.length === initialLength) {
             throw new AppError("Assessment not found or already deleted", 404);
         }
 
-        // Update the JSONB array
         await student.update({ arr_assessments: currentAssessments }, { transaction });
-
-        // Optional: Delete the physical file from the file system
-        // const fs = require('fs');
-        // const path = require('path');
-        // const absolutePath = path.join(process.cwd(), 'Uploads', 'assessments', path.basename(filePath));
-        // if (fs.existsSync(absolutePath)) {
-        //     fs.unlinkSync(absolutePath);
-        //     console.log(`Deleted physical file: ${absolutePath}`);
-        // } else {
-        //     console.warn(`Physical file not found for deletion: ${absolutePath}`);
-        // }
 
         await transaction.commit();
         return { statusCode: 200, message: "Assessment deleted successfully" };
     } catch (error) {
         await transaction.rollback();
-        console.error("Error deleting assessment:", error);
-        throw new AppError(`Failed to delete assessment: ${error.message}`, 500);
+        throw error; // Propagate original error
     }
 };
 
@@ -678,26 +636,21 @@ exports.assigntutorservices = async (studentId, req) => {
                 throw new AppError("Student is already assigned a tutor.", 400);
             }
 
-            // Assign tutor to student (update student's foreign key)
             await student.update({ objectId_assignedTutor: tutorId }, { transaction });
+            await tutor.addAssignedStudent(student, { transaction });
 
-            // Add student to tutor's assignedStudents (many-to-many)
-            await tutor.addArr_assignedStudent(student, { transaction });
             await transaction.commit();
             return { statusCode: 200, message: "Student has been assigned tutor successfully" };
 
         } catch (error) {
             if (!transaction.finished) await transaction.rollback();
-
             const isDeadlock = error?.parent?.code === 'ER_LOCK_DEADLOCK';
             if (isDeadlock && attempt < MAX_RETRIES) {
                 console.warn(`⚠️ Deadlock detected. Retrying attempt ${attempt}...`);
-                await new Promise(r => setTimeout(r, 200 * attempt)); // backoff
+                await new Promise(r => setTimeout(r, 200 * attempt));
                 continue;
             }
-
-            console.error(`❌ Error on attempt ${attempt}:`, error);
-            throw new AppError(`Failed to create student: ${error.message}`, 500);
+            throw error; // Propagate original error
         }
     }
 };

@@ -1,14 +1,14 @@
 // src/services/slot.services.js
-const { db } = require('../utils/db'); // ✅ Import the db object
+const { db } = require('../utils/db');
 const AppError = require("../utils/AppError");
-const { getIO } = require('../../socket'); // Adjust path if needed
-const moment = require('moment-timezone'); // For date parsing and timezone handling
-const { Op } = require('sequelize'); // ✅ Import Sequelize Operators
+const { getIO } = require('../../socket');
+const moment = require('moment-timezone');
+const { Op } = require('sequelize');
 const crypto = require('crypto');
-const { slotstatus, roles, paymentstatus } = require('../constants/sequelizetableconstants'); // ✅ Use Sequelize constants
-const { notifySocket, notifyEmail } = require('../utils/notification'); // Assuming these are correctly implemented
+const { slotstatus, roles, paymentstatus, attendance } = require('../constants/sequelizetableconstants');
+const { notifySocket, notifyEmail } = require('../utils/notification');
 const razorpay = require('../utils/razerpaysetup');
-// Create a manual slot (admin/tutor)
+
 exports.createManualSlotService = async (req) => {
     const {
         tutorId,
@@ -20,25 +20,22 @@ exports.createManualSlotService = async (req) => {
     } = req.body;
 
     const userId = req.user?.id;
-
     if (!userId) {
         throw new AppError("Unauthorized access", 401);
     }
 
-    const user = await db.User.findByPk(userId);
-    if (!user) {
-        throw new AppError("User not found", 404);
-    }
-    if (!tutorId || !date || !startTime || !endTime) {
-        throw new AppError("Required fields missing.", 400);
-    }
-
     const transaction = await db.sequelize.transaction();
-
     try {
+        const user = await db.User.findByPk(userId, { transaction });
+        if (!user) {
+            throw new AppError("User not found", 404);
+        }
+        if (!tutorId || !date || !startTime || !endTime) {
+            throw new AppError("Required fields missing.", 400);
+        }
+
         const dateOnly = moment(date).startOf('day').toDate();
 
-        // Check overlapping slot
         const existing = await db.Slot.findOne({
             where: {
                 obj_tutor: tutorId,
@@ -88,12 +85,13 @@ exports.createManualSlotService = async (req) => {
         };
     } catch (error) {
         await transaction.rollback();
-        console.error("Error creating manual slot:", error);
+        if (error instanceof AppError) {
+            throw error;
+        }
         throw new AppError(`Failed to create manual slot: ${error.message}`, 500);
     }
 };
 
-// update a manual slot (admin/tutor)
 exports.updateManualSlotService = async (req) => {
     const slotId = req.params.id;
     const userId = req.user?.id;
@@ -112,7 +110,6 @@ exports.updateManualSlotService = async (req) => {
     } = req.body;
 
     const transaction = await db.sequelize.transaction();
-
     try {
         const slot = await db.Slot.findByPk(slotId, { transaction });
         if (!slot) {
@@ -127,7 +124,6 @@ exports.updateManualSlotService = async (req) => {
         if (obj_student !== undefined) updateData.obj_student = obj_student;
         if (str_status) updateData.str_status = str_status;
 
-        // Check for overlapping slot conflicts if relevant fields changed
         if (obj_tutor || dt_date || str_startTime || str_endTime) {
             const dateToCheck = updateData.dt_date || slot.dt_date;
             const tutorToCheck = updateData.obj_tutor || slot.obj_tutor;
@@ -136,7 +132,7 @@ exports.updateManualSlotService = async (req) => {
 
             const existingConflict = await db.Slot.findOne({
                 where: {
-                    id: { [Op.ne]: slotId }, // Exclude current slot
+                    id: { [Op.ne]: slotId },
                     obj_tutor: tutorToCheck,
                     dt_date: dateToCheck,
                     [Op.or]: [
@@ -171,36 +167,35 @@ exports.updateManualSlotService = async (req) => {
         };
     } catch (error) {
         await transaction.rollback();
-        console.error("Error updating manual slot:", error);
+        if (error instanceof AppError) {
+            throw error;
+        }
         throw new AppError(`Failed to update manual slot: ${error.message}`, 500);
     }
 };
 
-// Book a slot for a student
 exports.bookSlotService = async (req) => {
-    const { slotId, } = req.body;
-    // const userId = req.user?.id; // User who is booking
-
-    // if (!userId) {
-    //     throw new AppError("Unauthorized access", 401);
-    // }
+    const { slotId } = req.body;
+    const userId = req.user?.id;
+    if (!userId) {
+        throw new AppError("Unauthorized access", 401);
+    }
 
     const MAX_RETRIES = 3;
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         const transaction = await db.sequelize.transaction();
         try {
-            // const user = await db.User.findByPk(userId, { transaction });
-            // if (!user) {
-            //     throw new AppError("User not found!", 404);
-            // }
-            const studentId = '394bf32e-3d80-4add-bb38-5af96ab34126';
+            const user = await db.User.findByPk(userId, { transaction });
+            if (!user || user.str_role !== roles.STUDENT || !user.obj_profileId) {
+                throw new AppError("Forbidden: Only student users can book slots.", 403);
+            }
+            const studentId = user.obj_profileId;
 
             const slot = await db.Slot.findByPk(slotId, { transaction });
             if (!slot || slot.str_status !== slotstatus.AVAILABLE) {
                 throw new AppError("Slot not available for booking.", 400);
             }
 
-            // Get tutor for rate
             const tutor = await db.Tutor.findByPk(slot.obj_tutor, {
                 attributes: ['id', 'str_email', 'str_firstName', 'int_rate'],
                 transaction
@@ -217,14 +212,13 @@ exports.bookSlotService = async (req) => {
                 throw new AppError("Student profile not found.", 404);
             }
 
-            // Calculate payment details
             const payout = tutor.int_rate;
-            const transactionFee = payout * 0.05; // 5% fee, or adjust your logic
+            const transactionFee = payout * 0.05;
             const totalAmount = payout + transactionFee;
 
             const receiptId = `receipt_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
             const razorpayOrder = await razorpay.orders.create({
-                amount: Math.round(totalAmount * 100), // in paisa
+                amount: Math.round(totalAmount * 100),
                 currency: 'INR',
                 receipt: receiptId,
                 notes: {
@@ -233,6 +227,7 @@ exports.bookSlotService = async (req) => {
                     slotId: slot.id.toString(),
                 },
             });
+            await transaction.commit();
             return {
                 success: true,
                 statusCode: 200,
@@ -241,21 +236,20 @@ exports.bookSlotService = async (req) => {
             };
         } catch (error) {
             if (!transaction.finished) await transaction.rollback();
-
             const isDeadlock = error?.parent?.code === 'ER_LOCK_DEADLOCK';
             if (isDeadlock && attempt < MAX_RETRIES) {
                 console.warn(`⚠️ Deadlock detected. Retrying attempt ${attempt}...`);
-                await new Promise(r => setTimeout(r, 200 * attempt)); // backoff
+                await new Promise(r => setTimeout(r, 200 * attempt));
                 continue;
             }
-
-            console.error(`❌ Error on attempt ${attempt}:`, error);
-            throw new AppError(`Failed to create student: ${error.message}`, 500);
+            if (error instanceof AppError) {
+                throw error;
+            }
+            throw new AppError(`Failed to book slot: ${error.message}`, 500);
         }
     }
 };
 
-// verfiy payments api
 exports.verifyRazorpayPaymentService = async (req) => {
     const {
         razorpay_order_id,
@@ -264,86 +258,97 @@ exports.verifyRazorpayPaymentService = async (req) => {
         slotId,
         paymentMethod
     } = req.body;
-    console.log(req.body);
-    const studentId = '394bf32e-3d80-4add-bb38-5af96ab34126';
-
-    const expectedSignature = crypto
-        .createHmac("sha256", process.env.KEY_SECRET_RAZORPAY_TEST)
-        .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-        .digest("hex");
-
-    if (expectedSignature !== razorpay_signature) {
-        return {
-            success: false,
-            statusCode: 400,
-            message: "Invalid payment signature"
-        };
+    const userId = req.user?.id;
+    if (!userId) {
+        throw new AppError("Unauthorized access", 401);
     }
+
     const transaction = await db.sequelize.transaction();
+    try {
+        const user = await db.User.findByPk(userId, { transaction });
+        if (!user || user.str_role !== roles.STUDENT || !user.obj_profileId) {
+            throw new AppError("Forbidden: Only student users can verify payments.", 403);
+        }
+        const studentId = user.obj_profileId;
 
-    const slot = await db.Slot.findByPk(slotId, { transaction });
-    if (!slot) {
-        throw new AppError("Slot not found.", 404);
+        const expectedSignature = crypto
+            .createHmac("sha256", process.env.KEY_SECRET_RAZORPAY_TEST)
+            .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+            .digest("hex");
+
+        if (expectedSignature !== razorpay_signature) {
+            return {
+                success: false,
+                statusCode: 400,
+                message: "Invalid payment signature"
+            };
+        }
+
+        const slot = await db.Slot.findByPk(slotId, { transaction });
+        if (!slot) {
+            throw new AppError("Slot not found.", 404);
+        }
+        const tutor = await db.Tutor.findByPk(slot.obj_tutor, { transaction });
+        if (!tutor) {
+            throw new AppError("Tutor not found.", 404);
+        }
+
+        const payout = tutor.int_rate;
+        const transactionFee = Math.round(payout * 0.05);
+        const totalAmount = payout + transactionFee;
+
+        const payment = await db.Payment.create({
+            str_razorpayOrderId: razorpay_order_id,
+            str_razorpayPaymentId: razorpay_payment_id,
+            str_razorpaySignature: razorpay_signature,
+            obj_studentId: studentId,
+            obj_tutorId: tutor.id,
+            int_amount: payout,
+            int_transactionFee: transactionFee,
+            int_totalAmount: totalAmount,
+            str_paymentMethod: paymentMethod || 'Razorpay',
+            obj_slotId: slot.id,
+            str_status: paymentstatus.COMPLETED
+        }, { transaction });
+
+        await slot.update({
+            str_status: slotstatus.BOOKED,
+            obj_student: studentId,
+            int_tutorPayout: payout
+        }, { transaction });
+
+        await transaction.commit();
+
+        const io = getIO();
+        if (io) {
+            notifySocket('slotBooked', {
+                slotId: slot.id,
+                status: 'confirmed',
+                studentId: studentId
+            });
+        }
+
+        await notifyEmail(
+            tutor.str_email,
+            'Slot Booked via Razorpay',
+            `Hello ${tutor.str_firstName},\n\nA slot has been booked by a student on ${slot.dt_date} from ${slot.str_startTime} to ${slot.str_endTime}.`
+        );
+
+        return {
+            success: true,
+            statusCode: 200,
+            message: "Payment verified and slot booked",
+            paymentId: payment.id
+        };
+    } catch (error) {
+        if (!transaction.finished) await transaction.rollback();
+        if (error instanceof AppError) {
+            throw error;
+        }
+        throw new AppError(`Failed to verify payment: ${error.message}`, 500);
     }
-    const tutor = await db.Tutor.findByPk(slot.obj_tutor, { transaction });
-    if (!tutor) {
-        throw new AppError("Tutor not found.", 404);
-    }
+};
 
-    const payout = tutor.int_rate;
-    const transactionFee = Math.round(payout * 0.05);
-    const totalAmount = payout + transactionFee;
-
-    // Create payment record
-    const payment = await db.Payment.create({
-        str_razorpayOrderId: razorpay_order_id,
-        str_razorpayPaymentId: razorpay_payment_id,
-        str_razorpaySignature: razorpay_signature,
-        obj_studentId: studentId,
-        obj_tutorId: tutor.id,
-        int_amount: payout,
-        int_transactionFee: transactionFee,
-        int_totalAmount: totalAmount,
-        str_paymentMethod: paymentMethod || 'Razorpay',
-        obj_slotId: slot.id,
-        str_status: paymentstatus.COMPLETED
-    }, { transaction });
-
-    // Update slot status to CONFIRMED or PAID (adjust as per your business logic)
-    await slot.update({
-        str_status: slotstatus.BOOKED,
-        obj_student: studentId,
-        int_tutorPayout: payout
-    }, { transaction });
-
-    await transaction.commit();
-
-    // Notify socket and email outside transaction
-    const io = getIO();
-    if (io) {
-        notifySocket('slotBooked', {
-            slotId: slot.id,
-            status: 'confirmed',
-            studentId: studentId
-        });
-    }
-
-    await notifyEmail(
-        tutor.str_email,
-        'Slot Booked via Razorpay',
-        `Hello ${tutor.str_firstName},\n\nA slot has been booked by a student on ${slot.dt_date} from ${slot.str_startTime} to ${slot.str_endTime}.`
-    );
-
-    return {
-        success: true,
-        statusCode: 200,
-        message: "Payment verified and slot booked",
-        paymentId: payment.id
-    };
-}
-
-
-// Reschedule slot for student
 exports.rescheduleSlotService = async (req) => {
     const { oldSlotId, newSlotId } = req.body;
     const userId = req.user?.id;
@@ -358,10 +363,10 @@ exports.rescheduleSlotService = async (req) => {
     const transaction = await db.sequelize.transaction();
     try {
         const user = await db.User.findByPk(userId, { transaction });
-        if (!user || user.str_role !== roles.STUDENT || !user.profileId) {
+        if (!user || user.str_role !== roles.STUDENT || !user.obj_profileId) {
             throw new AppError("Forbidden: Only student users can reschedule slots.", 403);
         }
-        const studentId = user.profileId;
+        const studentId = user.obj_profileId;
 
         const [oldSlot, newSlot] = await Promise.all([
             db.Slot.findByPk(oldSlotId, { transaction }),
@@ -375,29 +380,24 @@ exports.rescheduleSlotService = async (req) => {
             throw new AppError("New slot not found.", 404);
         }
 
-        // Validate old slot status and student ownership
         if (oldSlot.str_status !== slotstatus.BOOKED || oldSlot.obj_student !== studentId) {
             throw new AppError("Original slot is not booked by this student or has an invalid status for rescheduling.", 400);
         }
 
-        // Validate new slot status
         if (newSlot.str_status !== slotstatus.AVAILABLE) {
             throw new AppError(`New slot is not available for booking. Current status: ${newSlot.str_status}.`, 400);
         }
 
-        // Validate new slot date/time is in the future
         const newSlotDateTime = moment(`${moment(newSlot.dt_date).format('YYYY-MM-DD')} ${newSlot.str_startTime}`, 'YYYY-MM-DD HH:mm');
         if (newSlotDateTime.isBefore(moment())) {
             throw new AppError("Cannot reschedule to a slot that is in the past.", 400);
         }
 
-        // Perform the reschedule
         await oldSlot.update({ obj_student: null, str_status: slotstatus.AVAILABLE }, { transaction });
         await newSlot.update({ obj_student: studentId, str_status: slotstatus.BOOKED }, { transaction });
 
         await transaction.commit();
 
-        // Notify sockets and emails
         notifySocket('slotRescheduled', {
             oldSlotId: oldSlot.id,
             newSlotId: newSlot.id,
@@ -427,12 +427,13 @@ exports.rescheduleSlotService = async (req) => {
         return { statusCode: 200, message: "Slot rescheduled successfully." };
     } catch (error) {
         await transaction.rollback();
-        console.error("Error rescheduling slot:", error);
+        if (error instanceof AppError) {
+            throw error;
+        }
         throw new AppError(`Failed to reschedule slot: ${error.message}`, 500);
     }
 };
 
-// Get one slot information
 exports.getoneslotservice = async (req) => {
     const slotId = req.params.id;
     const userId = req.user?.id;
@@ -445,15 +446,15 @@ exports.getoneslotservice = async (req) => {
         include: [
             {
                 model: db.Tutor,
-                as: 'tutor', // Alias from Slot model association
+                as: 'tutor',
                 attributes: ['str_firstName', 'str_lastName'],
-                required: false // LEFT JOIN
+                required: false
             },
             {
                 model: db.Student,
-                as: 'student', // Alias from Slot model association
+                as: 'student',
                 attributes: ['str_firstName', 'str_lastName'],
-                required: false // LEFT JOIN
+                required: false
             }
         ]
     });
@@ -462,9 +463,8 @@ exports.getoneslotservice = async (req) => {
         throw new AppError("Slot not found", 404);
     }
 
-    // Format the response data
     const formattedSlot = {
-        id: slot.id, // Include slot ID
+        id: slot.id,
         date: slot.dt_date,
         startTime: slot.str_startTime,
         endTime: slot.str_endTime,
@@ -476,9 +476,8 @@ exports.getoneslotservice = async (req) => {
     return { statusCode: 200, data: formattedSlot };
 };
 
-// Get slots with pagination
 exports.getslotswithpaginationservice = async (req) => {
-    const { page = 1, limit = 10, date = '', tutorId = '', status: queryStatus = '' } = req.query; // Added status filter
+    const { page = 1, limit = 10, date = '', tutorId = '', status: queryStatus = '' } = req.query;
     const userId = req.user?.id;
 
     if (!userId) {
@@ -489,7 +488,6 @@ exports.getslotswithpaginationservice = async (req) => {
     const itemsPerPage = Math.max(parseInt(limit), 1);
     const filter = {};
 
-    // Date Filter
     if (date) {
         const filterDate = moment(date, 'YYYY-MM-DD', true);
         if (!filterDate.isValid()) {
@@ -501,12 +499,10 @@ exports.getslotswithpaginationservice = async (req) => {
         };
     }
 
-    // Tutor Filter
     if (tutorId) {
-        filter.obj_tutor = tutorId; // Tutor ID is a UUID string
+        filter.obj_tutor = tutorId;
     }
 
-    // Status Filter
     if (queryStatus) {
         filter.str_status = queryStatus;
     }
@@ -515,7 +511,7 @@ exports.getslotswithpaginationservice = async (req) => {
         where: filter,
         offset: (currentPage - 1) * itemsPerPage,
         limit: itemsPerPage,
-        order: [['dt_date', 'ASC'], ['str_startTime', 'ASC']], // Order by date then start time
+        order: [['dt_date', 'ASC'], ['str_startTime', 'ASC']],
         include: [
             {
                 model: db.Tutor,
@@ -530,12 +526,11 @@ exports.getslotswithpaginationservice = async (req) => {
                 required: false
             }
         ],
-        attributes: ['id', 'dt_date', 'str_startTime', 'str_endTime', 'str_status'], // Select core slot attributes
-        raw: true, // Return plain data objects
-        nest: true // Nest included data under their alias
+        attributes: ['id', 'dt_date', 'str_startTime', 'str_endTime', 'str_status'],
+        raw: true,
+        nest: true
     });
 
-    // Manually format names since raw:true + nest:true might not give exactly what you want
     const formattedSlots = slots.map(slot => ({
         id: slot.id,
         date: moment(slot.dt_date).format('YYYY-MM-DD'),
@@ -546,8 +541,6 @@ exports.getslotswithpaginationservice = async (req) => {
         student: slot.student ? `${slot.student.str_firstName} ${slot.student.str_lastName}` : null
     }));
 
-    if (tutorId && tutorId.trim() !== '') filter.obj_tutor = tutorId;
-    if (queryStatus && queryStatus.trim() !== '') filter.str_status = queryStatus;
     return {
         statusCode: 200,
         message: "Slots fetched with pagination.",
@@ -558,7 +551,6 @@ exports.getslotswithpaginationservice = async (req) => {
     };
 };
 
-// Delete slot
 exports.deleteslotservice = async (req) => {
     const slotId = req.params.id;
     const userId = req.user?.id;
@@ -585,11 +577,12 @@ exports.deleteslotservice = async (req) => {
         };
     } catch (error) {
         await transaction.rollback();
-        console.error("Error deleting slot:", error);
+        if (error instanceof AppError) {
+            throw error;
+        }
         throw new AppError(`Failed to delete slot: ${error.message}`, 500);
     }
 };
-
 
 exports.generateWeeklySlotsForTutor = async (tutor) => {
     const transaction = await db.sequelize.transaction();
@@ -621,11 +614,10 @@ exports.generateWeeklySlotsForTutor = async (tutor) => {
 
         const slotsToInsert = [];
 
-        // --- ADD A HARDCODED TEST SLOT ---
-        const testSlotDate = moment().add(1, 'year').startOf('day').toDate(); // A date far in the future
+        const testSlotDate = moment().add(1, 'year').startOf('day').toDate();
         const testSlotStartTime = '00:00';
         const testSlotEndTime = '00:30';
-        const testSlotUniqueId = 'test-slot-12345'; // A unique identifier for this test
+        const testSlotUniqueId = 'test-slot-12345';
 
         slotsToInsert.push({
             obj_tutor: tutorId,
@@ -635,11 +627,8 @@ exports.generateWeeklySlotsForTutor = async (tutor) => {
             int_tutorPayout: int_rate,
             str_status: slotstatus.AVAILABLE,
             objectId_createdBy: tutorId
-            // We can't set the 'id' directly here if it's UUIDV4, but we can query by other unique fields
         });
         console.log(`[Slot Gen Debug] Added hardcoded test slot for insertion: ${moment(testSlotDate).format('YYYY-MM-DD')} ${testSlotStartTime}-${testSlotEndTime}`);
-        // --- END HARDCODED TEST SLOT ---
-
 
         for (let i = 0; i < 7; i++) {
             const currentDay = moment(today).add(i, 'days');
@@ -674,10 +663,6 @@ exports.generateWeeklySlotsForTutor = async (tutor) => {
 
                     console.log(`[Slot Gen Debug]     Attempting to create sub-slot: ${startFormatted} - ${endFormatted} on ${moment(slotDate).format('YYYY-MM-DD')}`);
 
-                    // We are relying on `ignoreDuplicates: true` in bulkCreate.
-                    // The findOne check here is redundant if `ignoreDuplicates` is the primary strategy.
-                    // However, it can be useful for debugging *why* a slot might be skipped.
-                    // For production, you might remove this findOne for performance if you trust the unique index.
                     const alreadyExists = await db.Slot.findOne({
                         where: {
                             obj_tutor: tutorId,
@@ -719,6 +704,12 @@ exports.generateWeeklySlotsForTutor = async (tutor) => {
             });
             generatedCount = createdSlots.length;
             console.log(`[Slot Gen Debug] Successfully created ${generatedCount} slots.`);
+            // Modified to avoid calling get() on plain objects
+            console.log(`[Slot Gen Debug] Details of created slots (if any):`, createdSlots);
+            // Rest of the code
+
+            generatedCount = createdSlots.length;
+            console.log(`[Slot Gen Debug] Successfully created ${generatedCount} slots.`);
             console.log(`[Slot Gen Debug] Details of created slots (if any):`, createdSlots.map(s => s.get({ plain: true })));
 
             notifySocket('slotsGenerated', { tutorId, count: generatedCount });
@@ -738,7 +729,6 @@ exports.generateWeeklySlotsForTutor = async (tutor) => {
         await transaction.commit();
         console.log(`[Slot Gen Debug] Transaction committed successfully.`);
 
-        // --- VERIFY THE TEST SLOT AFTER COMMIT ---
         console.log(`[Slot Gen Debug] Verifying hardcoded test slot after commit...`);
         const verifiedTestSlot = await db.Slot.findOne({
             where: {
@@ -747,7 +737,6 @@ exports.generateWeeklySlotsForTutor = async (tutor) => {
                 str_startTime: testSlotStartTime,
                 str_endTime: testSlotEndTime
             }
-            // No transaction here, as we are checking after commit
         });
 
         if (verifiedTestSlot) {
@@ -755,27 +744,22 @@ exports.generateWeeklySlotsForTutor = async (tutor) => {
         } else {
             console.error(`[Slot Gen Debug] FAILURE: Hardcoded test slot NOT found in DB by Node.js app after commit.`);
         }
-        // --- END VERIFICATION ---
-
 
         return {
             statusCode: 201,
             message: `${generatedCount} slots generated successfully.`,
             generatedCount: generatedCount
         };
-
     } catch (error) {
         await transaction.rollback();
         console.error(`[Slot Gen Debug] Transaction rolled back due to error:`, error);
         if (error instanceof AppError) {
             throw error;
         }
-        throw new AppError(error.message || "Failed to generate weekly slots.", error.statusCode || 500);
+        throw new AppError(`Failed to generate weekly slots: ${error.message}`, 500);
     }
 };
 
-
-// Cancel slot from student
 exports.cancelSlotService = async (req) => {
     const slotId = req.params.id;
     const userId = req.user?.id;
@@ -792,7 +776,6 @@ exports.cancelSlotService = async (req) => {
         }
         const studentId = user.obj_profileId;
 
-        // Find and update the slot
         const [affectedRows] = await db.Slot.update(
             { str_status: slotstatus.AVAILABLE, obj_student: null },
             {
@@ -809,7 +792,6 @@ exports.cancelSlotService = async (req) => {
             throw new AppError("Slot not found, not booked by this student, or not authorized to cancel.", 404);
         }
 
-        // Fetch the updated slot to get details for notifications
         const slot = await db.Slot.findByPk(slotId, { transaction });
 
         await transaction.commit();
@@ -829,12 +811,105 @@ exports.cancelSlotService = async (req) => {
     } catch (error) {
         await transaction.rollback();
         console.error("Error cancelling slot:", error);
+        if (error instanceof AppError) {
+            throw error;
+        }
         throw new AppError(`Failed to cancel slot: ${error.message}`, 500);
     }
 };
 
-// Get all available slots for student to select
 exports.getAvailableSlotsService = async (req) => {
+    const { date } = req.query;
+    const userId = req.user?.id;
+
+    if (!userId) {
+        throw new AppError("Unauthorized access", 401);
+    }
+
+    const transaction = await db.sequelize.transaction();
+    try {
+        const user = await db.User.findByPk(userId, { transaction });
+        if (!user) {
+            throw new AppError("User not found", 404);
+        }
+
+        if (user.str_role !== roles.STUDENT || !user.obj_profileId) {
+            throw new AppError("Forbidden: Only student users can view available slots for their assigned tutor.", 403);
+        }
+        const studentId = user.obj_profileId;
+
+        const student = await db.Student.findByPk(studentId, {
+            attributes: ['objectId_assignedTutor', 'str_timezone'],
+            transaction
+        });
+
+        if (!student || !student.objectId_assignedTutor) {
+            throw new AppError("Student is not assigned to any tutor.", 400);
+        }
+
+        const filter = {
+            str_status: slotstatus.AVAILABLE,
+            obj_tutor: student.objectId_assignedTutor
+        };
+
+        const studentTimezone = student.str_timezone || "Asia/Kolkata";
+
+        if (date) {
+            const filterDate = moment.tz(date, 'YYYY-MM-DD', studentTimezone);
+            if (!filterDate.isValid()) {
+                throw new AppError("Invalid date format. Use YYYY-MM-DD.", 400);
+            }
+            filter.dt_date = {
+                [Op.gte]: filterDate.clone().startOf('day').toDate(),
+                [Op.lte]: filterDate.clone().endOf('day').toDate()
+            };
+        } else {
+            filter.dt_date = {
+                [Op.gte]: moment().tz(studentTimezone).startOf('day').toDate()
+            };
+        }
+
+        const slots = await db.Slot.findAll({
+            where: filter,
+            include: [
+                {
+                    model: db.Tutor,
+                    as: 'tutor',
+                    attributes: ['str_firstName', 'str_lastName'],
+                    required: true
+                }
+            ],
+            order: [['dt_date', 'ASC'], ['str_startTime', 'ASC']],
+            attributes: ['id', 'dt_date', 'str_startTime', 'str_endTime', 'str_status'],
+            transaction
+        });
+
+        const formattedSlots = slots.map(slot => ({
+            id: slot.id,
+            date: moment(slot.dt_date).tz(studentTimezone).format('YYYY-MM-DD'),
+            startTime: slot.str_startTime,
+            endTime: slot.str_endTime,
+            status: slot.str_status,
+            tutor: slot.tutor ? `${slot.tutor.str_firstName} ${slot.tutor.str_lastName}` : null
+        }));
+
+        await transaction.commit();
+
+        return {
+            statusCode: 200,
+            message: "Available slots fetched successfully.",
+            data: formattedSlots
+        };
+    } catch (error) {
+        await transaction.rollback();
+        if (error instanceof AppError) {
+            throw error;
+        }
+        throw new AppError(`Failed to fetch available slots: ${error.message}`, 500);
+    }
+};
+
+exports.getMySlotsService = async (req) => {
     const { date } = req.query;
     const userId = req.user?.id;
 
@@ -847,114 +922,18 @@ exports.getAvailableSlotsService = async (req) => {
         throw new AppError("User not found", 404);
     }
 
-    // Ensure the user is a student and get their profile ID
-    if (user.str_role !== roles.STUDENT || !user.obj_profileId) {
-        throw new AppError("Forbidden: Only student users can view available slots for their assigned tutor.", 403);
-    }
-    const studentId = user.obj_profileId;
-
-    const student = await db.Student.findByPk(studentId, {
-        attributes: ['objectId_assignedTutor']
-    });
-
-    if (!student || !student.objectId_assignedTutor) {
-        throw new AppError("Student is not assigned to any tutor.", 400);
-    }
-
-    const filter = {
-        str_status: slotstatus.AVAILABLE, // Only available slots
-        obj_tutor: student.objectId_assignedTutor // Only slots for the assigned tutor
-    };
-
-    const studentTimezone = student.str_timezone || "Asia/Kolkata"; // Use student's timezone or default
-
-    if (date) {
-        const filterDate = moment.tz(date, 'YYYY-MM-DD', studentTimezone);
-        if (!filterDate.isValid()) {
-            throw new AppError("Invalid date format. Use YYYY-MM-DD.", 400);
-        }
-        filter.dt_date = {
-            [Op.gte]: filterDate.clone().startOf('day').toDate(),
-            [Op.lte]: filterDate.clone().endOf('day').toDate()
-        };
-    } else {
-        // If no date provided, get slots from today onwards
-        filter.dt_date = { [Op.gte]: moment.tz(studentTimezone).startOf('day').toDate() };
-    }
-
-    const availableSlots = await db.Slot.findAll({
-        where: filter,
-        order: [['dt_date', 'ASC'], ['str_startTime', 'ASC']],
-        include: [
-            {
-                model: db.Tutor,
-                as: 'tutor',
-                attributes: ['str_firstName', 'str_lastName'],
-                required: false
-            }
-        ],
-        attributes: ['id', 'dt_date', 'str_startTime', 'str_endTime', 'str_status'],
-        raw: true,
-        nest: true
-    });
-
-    const now = moment.tz(studentTimezone); // Current time in student's timezone
-    const futureSlots = availableSlots.filter(slot => {
-        const slotDateTime = moment.tz(`${moment(slot.dt_date).format('YYYY-MM-DD')} ${slot.str_startTime}`, 'YYYY-MM-DD HH:mm', studentTimezone);
-        return slotDateTime.isAfter(now);
-    }).map(slot => ({ // Format output
-        id: slot.id,
-        date: slot.dt_date,
-        startTime: slot.str_startTime,
-        endTime: slot.str_endTime,
-        status: slot.str_status,
-        tutor: slot.tutor ? `${slot.tutor.str_firstName} ${slot.tutor.str_lastName}` : null,
-    }));
-
-    return {
-        statusCode: 200,
-        message: "Available slots fetched successfully.",
-        data: futureSlots
-    };
-};
-
-// Get his own booked slots
-exports.getMySlotsService = async (req) => {
-    const userId = req.user?.id;
-
-    if (!userId) {
-        throw new AppError("Unauthorized: User not logged in.", 401);
-    }
-
-    const user = await db.User.findByPk(userId);
-    if (!user) {
-        throw new AppError("User not found", 404);
-    }
-
-    // Determine if user is student or tutor to fetch relevant slots
-    let profileId = user.obj_profileId;
-    let isStudent = user.str_role === roles.STUDENT;
-    let isTutor = user.str_role === roles.TUTOR;
-
-    if (!profileId) {
+    if (!user.obj_profileId) {
         throw new AppError("User profile not linked.", 400);
     }
 
     const filter = {};
-    if (isStudent) {
-        filter.obj_student = profileId;
-        filter.str_status = { [Op.in]: [slotstatus.BOOKED, slotstatus.COMPLETED] };
-    } else if (isTutor) {
-        filter.obj_tutor = profileId;
-        // Tutors might see all their slots, or only booked/completed ones
-        // For now, mirroring Mongoose: booked/completed
-        filter.str_status = { [Op.in]: [slotstatus.BOOKED, slotstatus.COMPLETED, slotstatus.AVAILABLE, slotstatus.CANCELLED] };
+    if (user.str_role === roles.STUDENT) {
+        filter.obj_student = user.obj_profileId;
+    } else if (user.str_role === roles.TUTOR) {
+        filter.obj_tutor = user.obj_profileId;
     } else {
-        throw new AppError("Forbidden: Only students or tutors can view their slots.", 403);
+        throw new AppError("User profile not linked.", 400);
     }
-
-
-    const { date, status: queryStatus } = req.query;
 
     if (date) {
         const filterDate = moment(date, 'YYYY-MM-DD', true);
@@ -965,18 +944,10 @@ exports.getMySlotsService = async (req) => {
             [Op.gte]: filterDate.startOf('day').toDate(),
             [Op.lte]: filterDate.endOf('day').toDate()
         };
-    } else {
-        // Default to slots from today onwards if no date is specified
-        filter.dt_date = { [Op.gte]: moment().startOf('day').toDate() };
     }
 
-    if (queryStatus && Object.values(slotstatus).includes(queryStatus)) { // Validate status against enum
-        filter.str_status = queryStatus;
-    }
-
-    const mySlots = await db.Slot.findAll({
+    const slots = await db.Slot.findAll({
         where: filter,
-        order: [['dt_date', 'ASC'], ['str_startTime', 'ASC']],
         include: [
             {
                 model: db.Tutor,
@@ -991,33 +962,27 @@ exports.getMySlotsService = async (req) => {
                 required: false
             }
         ],
-        attributes: ['id', 'dt_date', 'str_startTime', 'str_endTime', 'str_status', 'obj_tutor', 'obj_student'],
-        raw: true,
-        nest: true
+        order: [['dt_date', 'ASC'], ['str_startTime', 'ASC']],
+        attributes: ['id', 'dt_date', 'str_startTime', 'str_endTime', 'str_status']
     });
 
-    // Format output
-    const formattedMySlots = mySlots.map(slot => ({
+    const formattedSlots = slots.map(slot => ({
         id: slot.id,
-        date: slot.dt_date,
+        date: moment(slot.dt_date).format('YYYY-MM-DD'),
         startTime: slot.str_startTime,
         endTime: slot.str_endTime,
         status: slot.str_status,
         tutor: slot.tutor ? `${slot.tutor.str_firstName} ${slot.tutor.str_lastName}` : null,
-        student: slot.student ? `${slot.student.str_firstName} ${slot.student.str_lastName}` : null,
-        // Include raw IDs for debugging or further processing if needed
-        tutorId: slot.obj_tutor,
-        studentId: slot.obj_student
+        student: slot.student ? `${slot.student.str_firstName} ${slot.student.str_lastName}` : null
     }));
 
     return {
         statusCode: 200,
         message: "My slots fetched successfully.",
-        data: formattedMySlots
+        data: formattedSlots
     };
 };
 
-// Dynamic calendar service
 exports.getCalendarSlots = async (req) => {
     const { start, end } = req.query;
     const userId = req.user?.id;
@@ -1032,17 +997,31 @@ exports.getCalendarSlots = async (req) => {
     if (!startDate.isValid() || !endDate.isValid()) {
         throw new AppError("Invalid date format. Use YYYY-MM-DD.", 400);
     }
+
     if (endDate.isBefore(startDate)) {
-        throw new AppError("End date must be after start date", 400);
+        throw new AppError("End date must be after start date.", 400);
+    }
+
+    const user = await db.User.findByPk(userId);
+    if (!user) {
+        throw new AppError("User not found", 404);
+    }
+
+    const filter = {
+        dt_date: {
+            [Op.gte]: startDate.startOf('day').toDate(),
+            [Op.lte]: endDate.endOf('day').toDate()
+        }
+    };
+
+    if (user.str_role === roles.STUDENT && user.obj_profileId) {
+        filter.obj_student = user.obj_profileId;
+    } else if (user.str_role === roles.TUTOR && user.obj_profileId) {
+        filter.obj_tutor = user.obj_profileId;
     }
 
     const slots = await db.Slot.findAll({
-        where: {
-            dt_date: {
-                [Op.gte]: startDate.toDate(),
-                [Op.lte]: endDate.toDate()
-            }
-        },
+        where: filter,
         include: [
             {
                 model: db.Tutor,
@@ -1057,90 +1036,110 @@ exports.getCalendarSlots = async (req) => {
                 required: false
             }
         ],
-        attributes: ['id', 'dt_date', 'str_startTime', 'str_endTime', 'str_status'],
         order: [['dt_date', 'ASC'], ['str_startTime', 'ASC']],
-        raw: true,
-        nest: true
+        attributes: ['id', 'dt_date', 'str_startTime', 'str_endTime', 'str_status']
     });
+
+    const formattedSlots = slots.map(slot => ({
+        id: slot.id,
+        date: moment(slot.dt_date).format('YYYY-MM-DD'),
+        startTime: slot.str_startTime,
+        endTime: slot.str_endTime,
+        status: slot.str_status,
+        tutor: slot.tutor ? `${slot.tutor.str_firstName} ${slot.tutor.str_lastName}` : null,
+        student: slot.student ? `${slot.student.str_firstName} ${slot.student.str_lastName}` : null
+    }));
 
     return {
         statusCode: 200,
-        data: slots.map(slot => ({
-            slotId: slot.id,
-            date: slot.dt_date,
-            startTime: slot.str_startTime,
-            endTime: slot.str_endTime,
-            status: slot.str_status,
-            tutor: slot.tutor ? `${slot.tutor.str_firstName} ${slot.tutor.str_lastName}` : null,
-            student: slot.student ? `${slot.student.str_firstName} ${slot.student.str_lastName}` : null
-        }))
+        data: formattedSlots
     };
 };
 
-// Student mark attendance for payment (Tutor marks attendance for a slot)
 exports.markAttendance = async (slotId, req) => {
-    const { attendance } = req.body;
+    const { attendance: attendanceStatus } = req.body;
     const userId = req.user?.id;
 
     if (!userId) {
         throw new AppError("Unauthorized access", 401);
     }
-    if (![attendance.ATTENDED, attendance.MISSED].includes(attendance)) {
-        throw new AppError("Invalid attendance status", 400);
+
+    if (!slotId) {
+        throw new AppError("Slot ID is required.", 400);
+    }
+
+    if (!attendanceStatus || ![attendance.ATTENDED, attendance.ABSENT].includes(attendanceStatus)) {
+        throw new AppError("Invalid attendance status. Must be 'attended' or 'absent'.", 400);
     }
 
     const transaction = await db.sequelize.transaction();
     try {
         const user = await db.User.findByPk(userId, { transaction });
-        if (!user || user.str_role !== roles.TUTOR || !user.profileId) {
+        if (!user || user.str_role !== roles.TUTOR || !user.obj_profileId) {
             throw new AppError("Forbidden: Only tutors can mark attendance.", 403);
         }
-        const tutorId = user.profileId;
+        const tutorId = user.obj_profileId;
 
-        // Find and verify the slot belongs to the tutor
         const slot = await db.Slot.findOne({
-            where: {
-                id: slotId,
-                obj_tutor: tutorId
-            },
+            where: { id: slotId, obj_tutor: tutorId },
+            include: [
+                { model: db.Tutor, as: 'tutor', attributes: ['str_firstName', 'str_email'] },
+                { model: db.Student, as: 'student', attributes: ['str_firstName', 'str_lastName', 'str_email'] }
+            ],
             transaction
         });
+
         if (!slot) {
-            throw new AppError("Slot not found or not authorized for this tutor.", 404);
+            throw new AppError("Slot not found or not associated with this tutor.", 404);
         }
 
-        // Update slot status to COMPLETED if not already, and set payout if not set
-        if (slot.str_status !== slotstatus.COMPLETED) {
-            await slot.update({ str_status: slotstatus.COMPLETED }, { transaction });
-
-            if (!slot.int_tutorPayout) {
-                const tutorDetails = await db.Tutor.findByPk(tutorId, { attributes: ['int_rate'], transaction });
-                await slot.update({ int_tutorPayout: tutorDetails?.int_rate || 10 }, { transaction }); // Default to 10 if no rate
-            }
+        if (!slot.obj_student) {
+            throw new AppError("Cannot mark attendance for a slot with no student booked.", 400);
         }
 
-        // Set attendance
-        await slot.update({ str_attendance: attendance }, { transaction });
+        if (slot.str_status !== slotstatus.BOOKED) {
+            throw new AppError("Attendance can only be marked for booked slots.", 400);
+        }
+
+        const slotDateTime = moment(`${moment(slot.dt_date).format('YYYY-MM-DD')} ${slot.str_startTime}`, 'YYYY-MM-DD HH:mm');
+        if (slotDateTime.isAfter(moment())) {
+            throw new AppError("Cannot mark attendance for a future slot.", 400);
+        }
+
+        await slot.update(
+            {
+                str_status: slotstatus.COMPLETED,
+                str_attendance: attendanceStatus
+            },
+            { transaction }
+        );
 
         await transaction.commit();
 
-        notifySocket('attendanceUpdated', { slotId: slot.id, attendance, tutorId });
+        notifySocket('attendanceMarked', {
+            slotId: slot.id,
+            attendance: attendanceStatus,
+            studentId: slot.obj_student,
+            tutorId: slot.obj_tutor
+        });
 
-        if (attendance === attendance.ATTENDED && slot.obj_student) {
-            const student = await db.Student.findByPk(slot.obj_student, { attributes: ['str_email', 'str_firstName'] });
-            if (student) {
-                await notifyEmail(
-                    student.str_email,
-                    'Attendance Marked',
-                    `Hello ${student.str_firstName},\n\nYour attendance for the session on ${moment(slot.dt_date).format('YYYY-MM-DD')} from ${slot.str_startTime} to ${slot.str_endTime} has been marked as attended.`
-                );
-            }
+        if (slot.student) {
+            await notifyEmail(
+                slot.student.str_email,
+                'Attendance Marked',
+                `Hello ${slot.student.str_firstName},\n\nYour attendance for the slot on ${moment(slot.dt_date).format('YYYY-MM-DD')} from ${slot.str_startTime} to ${slot.str_endTime} has been marked as ${attendanceStatus}.`
+            );
         }
 
-        return { statusCode: 200, message: `Attendance marked as ${attendance}` };
+        return {
+            statusCode: 200,
+            message: `Attendance marked as ${attendanceStatus}`
+        };
     } catch (error) {
         await transaction.rollback();
-        console.error("Error marking attendance:", error);
+        if (error instanceof AppError) {
+            throw error;
+        }
         throw new AppError(`Failed to mark attendance: ${error.message}`, 500);
     }
 };

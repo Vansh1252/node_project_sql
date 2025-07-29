@@ -19,6 +19,9 @@ exports.createtutorservice = async (req) => {
 
     const userId = req.user?.id;
     if (!userId) throw new AppError("Unauthorized access", 401);
+    const user = await db.User.findByPk(userId);
+    if (!user) throw new AppError("User not found", 404);
+
 
     if (!firstName || !lastName || !email || !phoneNumber || !address || !city || !province || !postalCode || !country || rate === undefined || !timezone) {
         throw new AppError("Missing required fields", 400);
@@ -100,7 +103,6 @@ exports.createtutorservice = async (req) => {
         return { statusCode: 201, message: "Tutor created successfully." };
     } catch (error) {
         await transaction.rollback();
-        console.error("Error creating tutor:", error);
         throw new AppError(`Failed to create tutor: ${error.message}`, 500);
     }
 };
@@ -109,7 +111,9 @@ exports.createtutorservice = async (req) => {
 exports.updatetutorservice = async (req) => {
     const tutorId = req.params.id;
     const userId = req.user?.id;
-
+    if(!tutorId){
+        throw new AppError('Tutor not found',401)
+    }
     if (!userId) {
         throw new AppError("Unauthorized access", 401);
     }
@@ -167,7 +171,7 @@ exports.updatetutorservice = async (req) => {
             if (country) tutorUpdateData.str_country = country;
             if (rate !== undefined) tutorUpdateData.int_rate = rate;
             if (timezone) tutorUpdateData.str_timezone = timezone;
-            if (newStatus && [status.ACTIVE, status.INACTIVE].includes(newStatus)) tutorUpdateData.str_status = newStatus;
+            if (newStatus && [userStatus.ACTIVE, userStatus.INACTIVE].includes(newStatus)) tutorUpdateData.str_status = newStatus;
 
             // Update Tutor model
             if (Object.keys(tutorUpdateData).length > 0) {
@@ -260,7 +264,6 @@ exports.updatetutorservice = async (req) => {
                 continue;
             }
 
-            console.error(`❌ Error on attempt ${attempt}:`, error);
             throw new AppError(`Failed to create student: ${error.message}`, 500);
         }
     }
@@ -271,7 +274,9 @@ exports.getonetutorservice = async (req) => {
     const tutorId = req.params.id;
     const userId = req.user?.id;
     try {
-
+        if (!tutorId) {
+            throw new AppError("Tutor not found", 404);
+        }
         if (!userId) {
             throw new AppError("Unauthorized access", 401);
         }
@@ -294,8 +299,6 @@ exports.getonetutorservice = async (req) => {
                 }
             ]
         });
-        console.log(tutor)
-
         if (!tutor) {
             throw new AppError("Tutor not found", 404);
         }
@@ -306,7 +309,7 @@ exports.getonetutorservice = async (req) => {
         const slots = await db.Slot.findAll({
             where: {
                 obj_tutor: tutorId
-            },  
+            },
             raw: true
         });
         const PaymentHistory = await db.Payment.findAll({
@@ -357,7 +360,7 @@ exports.getonetutorservice = async (req) => {
 
         return { statusCode: 200, data: responseData };
     } catch (error) {
-        console.log(error);
+        throw new AppError('something went wrong', 500);
     };
 };
 
@@ -459,7 +462,6 @@ exports.deletetutorservice = async (req) => {
 
     } catch (error) {
         await transaction.rollback();
-        console.error("Error deleting tutor:", error);
         throw new AppError(`Failed to delete tutor: ${error.message}`, 500);
     }
 };
@@ -510,7 +512,6 @@ exports.adjustTutorAvailability = async (studentId) => {
         return { statusCode: 200, message: "Tutor availability adjusted successfully" };
     } catch (error) {
         await transaction.rollback();
-        console.error("Error adjusting tutor availability:", error);
         throw new AppError(`Failed to adjust tutor availability: ${error.message}`, 500);
     }
 };
@@ -594,7 +595,6 @@ exports.calculateTutorPayments = async (tutorId) => {
             }
         };
     } catch (error) {
-        console.error("Error calculating tutor payments:", error);
         throw new AppError(`Failed to calculate tutor payments: ${error.message}`, 500);
     }
 };
@@ -635,7 +635,6 @@ exports.assignstudentservices = async (tutorId, req) => {
 
     } catch (error) {
         await transaction.rollback();
-        console.error("Error assigning student to tutor:", error);
         throw new AppError(`Failed to assign student: ${error.message}`, 500);
     }
 };
@@ -715,7 +714,6 @@ exports.removeStudentService = async (req, tutorId) => {
 
     } catch (error) {
         await transaction.rollback();
-        console.error("Error removing student from tutor:", error);
         throw new AppError(`Failed to remove student from tutor: ${error.message}`, 500);
     }
 };
