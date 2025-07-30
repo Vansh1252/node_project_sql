@@ -172,15 +172,6 @@ describe('Slot Routes (/api/slot)', () => {
         });
     });
 
-    describe('POST /generate-weekly', () => {
-        it('should call generateWeeklySlotsForAllTutors controller for an ADMIN', async () => {
-            slotController.generateWeeklySlotsForAllTutors.mockImplementation((req, res) => res.status(200).send());
-            const res = await request(app).post('/api/slot/generate-weekly').set('Authorization', adminToken);
-            expect(res.statusCode).toBe(200);
-            expect(slotController.generateWeeklySlotsForAllTutors).toHaveBeenCalled();
-        });
-    });
-
     describe('POST /attendance/:slotId', () => {
         it('should call markAttendance controller for a TUTOR', async () => {
             slotController.markAttendance.mockImplementation((req, res) => res.status(200).send());

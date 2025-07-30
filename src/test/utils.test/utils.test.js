@@ -94,7 +94,6 @@ jest.mock('razorpay', () => {
 
 // --- Real Imports ---
 const { notifySocket, notifyEmail } = require('../../utils/notification');
-const runWeeklySlotGenerator = require('../../utils/weeklySlotCron');
 const { generateToken } = require('../../utils/genratetoken');
 const { connectDB, sequelize } = require('../../utils/db');
 const { getIO } = require('../../../socket');

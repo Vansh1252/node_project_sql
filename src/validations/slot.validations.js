@@ -41,14 +41,12 @@ exports.validateUpdateManualSlot = [
     // Validate slotId from parameters: must exist and be a string (assuming MongoDB ObjectId)
     param('id')
         .exists().withMessage('Slot ID is required in parameters.')
-        .isString().withMessage('Slot ID must be a string.')
-        .isMongoId().withMessage('Slot ID must be a valid MongoDB ID.'), // Add this if slotId is a Mongo ObjectId
+        .isString().withMessage('Slot ID must be a string.'),
 
     // Validate obj_tutor: optional, must be a string (assuming ObjectId)
     body('obj_tutor')
         .optional()
-        .isString().withMessage('Tutor object must be a string.')
-        .isMongoId().withMessage('Tutor object must be a valid MongoDB ID.'), // Add this if obj_tutor is a Mongo ObjectId
+        .isString().withMessage('Tutor object must be a string.'),
 
     // Validate dt_date: optional, must be an ISO 8601 date string
     body('dt_date')
@@ -65,7 +63,6 @@ exports.validateUpdateManualSlot = [
     body('str_endTime')
         .optional()
         .isString().withMessage('End time must be a string.'),
-    // You can add a regex here for specific time format if needed
 
     // Validate obj_student: optional, can be null or a string
     body('obj_student')
@@ -75,9 +72,7 @@ exports.validateUpdateManualSlot = [
         .if(body('obj_student').exists()) // Only if it exists, check if it's null
         .not().isEmpty().withMessage('Student object cannot be empty if provided.')
         .customSanitizer(value => (value === '' ? null : value)), // Convert empty string to null
-    // If obj_student is a Mongo ObjectId, add .isMongoId() here
 
-    // Validate str_status: optional, must be one of the allowed values
     body('str_status')
         .optional()
         .isIn(['available', 'booked', 'cancelled']).withMessage('Status must be "available", "booked", or "cancelled".'),
@@ -107,6 +102,5 @@ exports.validateVerifyRazorpayPayment = [
     body('slotId')
         .exists().withMessage('Slot ID is required.')
         .isString().withMessage('Slot ID must be a string.')
-        .isMongoId().withMessage('Slot ID must be a valid MongoDB ID.')
         .notEmpty().withMessage('Slot ID cannot be empty.'),
 ];

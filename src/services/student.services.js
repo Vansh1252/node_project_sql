@@ -411,7 +411,15 @@ exports.getonestudentservice = async (req) => {
 
 // GET STUDENTS WITH PAGINATION SERVICE
 exports.getonewithpaginationservice = async (req) => {
-    const { page = 1, limit = 10, name = '', status: queryStatus, date, tutorId } = req.query;
+    const {
+        page = 1,
+        limit = 10,
+        name = '',
+        status: queryStatus,
+        date,
+        tutorId
+    } = req.query;
+
     const userId = req.user?.id;
 
     if (!userId) {
@@ -424,14 +432,17 @@ exports.getonewithpaginationservice = async (req) => {
     if (currentPage < 1) throw new AppError("Page must be a positive integer.", 400);
     if (itemsPerPage < 1) throw new AppError("Limit must be a positive integer.", 400);
 
+    // Build filters
     const filter = {};
 
     if (name && typeof name === 'string') {
         filter.str_firstName = { [Op.like]: `%${name}%` };
     }
+
     if (queryStatus) {
         filter.str_status = queryStatus;
     }
+
     if (date) {
         const filterDate = moment(date, 'YYYY-MM-DD', true);
         if (!filterDate.isValid()) {
@@ -442,6 +453,7 @@ exports.getonewithpaginationservice = async (req) => {
             [Op.lte]: filterDate.endOf('day').toDate()
         };
     }
+
     if (tutorId) {
         filter.objectId_assignedTutor = tutorId;
     }
@@ -460,12 +472,22 @@ exports.getonewithpaginationservice = async (req) => {
             }
         ],
         attributes: [
-            'id', 'str_firstName', 'str_lastName', 'str_email', 'str_status', 'createdAt'
+            'id',
+            'str_firstName',
+            'str_lastName',
+            'str_email',
+            'str_status',
+            'int_studentNumber',
+            'arr_assessments',
+            'str_phoneNumber',
+            'objectId_assignedTutor',
+            'createdAt'
         ],
         raw: true,
         nest: true
     });
 
+    // Add derived fields (e.g., assignedTutorName)
     const formattedStudents = students.map(student => ({
         ...student,
         assignedTutorName: student.obj_assignedTutor
@@ -481,7 +503,6 @@ exports.getonewithpaginationservice = async (req) => {
         totalRecords: total
     };
 };
-
 // DELETE STUDENT SERVICE
 exports.deletestudentservice = async (req) => {
     const studentId = req.params.id;
@@ -613,7 +634,7 @@ exports.deleteAssessments = async (studentId, filePath) => {
 // ASSIGN TUTOR TO STUDENT
 exports.assigntutorservices = async (studentId, req) => {
     const { tutorId } = req.body;
-    const userId = req.user.id;
+    const userId = req.user?.id;
 
     if (!userId) {
         throw new AppError("User is unauthorized!", 401);
@@ -637,7 +658,7 @@ exports.assigntutorservices = async (studentId, req) => {
             }
 
             await student.update({ objectId_assignedTutor: tutorId }, { transaction });
-            await tutor.addAssignedStudent(student, { transaction });
+            await tutor.addArr_assignedStudents(student, { transaction });
 
             await transaction.commit();
             return { statusCode: 200, message: "Student has been assigned tutor successfully" };

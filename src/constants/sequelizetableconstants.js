@@ -5,7 +5,8 @@ exports.tables = {
     TUTOR: "tb_tutors",
     SLOT: "tb_slots",
     PAYMENT: "tb_payments",
-    AVAILABILITY_SLOT: "tb_availability_slots",    
+    AVAILABILITY_SLOT: "tb_availability_slots", 
+    TUTOR_STUDENTS: "tb_tutor_students"   
 };
 
 exports.roles = {

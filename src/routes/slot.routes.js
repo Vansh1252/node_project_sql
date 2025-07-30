@@ -100,7 +100,6 @@ router.get("/", protect, restrictTo(roles.ADMIN, roles.TUTOR), slotController.ge
 
 router.delete("/:id", protect, restrictTo(roles.ADMIN), slotController.deleteslot);
 
-router.post("/generate-weekly", protect, restrictTo(roles.ADMIN), slotController.generateWeeklySlotsForAllTutors);
 router.post('/attendance/:slotId', protect, restrictTo(roles.TUTOR, roles.ADMIN), slotController.markAttendance);
 router.get('/calendar', protect, restrictTo(roles.ADMIN, roles.TUTOR), slotController.getCalendarSlots);
 module.exports = router;

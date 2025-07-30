@@ -56,35 +56,6 @@ exports.deleteslot = catchAsync(async (req, res) => {
     return res.status(result.statusCode).json(result);
 });
 
-// Generate weekly slots for all tutors based on their availability
-exports.generateWeeklySlotsForAllTutors = catchAsync(async (req, res) => {
-    const tutors = await db.Tutor.findAll({
-        include: [{
-            model: db.AvailabilitySlot,
-            as: 'arr_weeklyAvailability', // Alias defined in Tutor model
-            required: true // Ensures only tutors with at least one availability slot are returned
-        }]
-    });
-
-    let totalCreated = 0;
-
-    for (const tutor of tutors) {
-        try {
-            // Pass the Sequelize tutor instance to the service
-            const result = await generateWeeklySlotsForTutor(tutor);
-            totalCreated += result.generatedCount || 0;
-            console.log(`Generated ${result.generatedCount} slots for tutor ${tutor.id}`); // ✅ tutor.id
-        } catch (error) {
-            console.error(`Failed to generate slots for tutor ${tutor.id}: ${error.message}`); // ✅ tutor.id
-        }
-    }
-    return res.status(200).json({
-        message: "Weekly slots generated successfully",
-        totalTutors: tutors.length,
-        totalSlotsCreated: totalCreated,
-    });
-});
-
 // Cancel a booked slot
 exports.cancelSlot = catchAsync(async (req, res) => {
     const result = await cancelSlotService(req);

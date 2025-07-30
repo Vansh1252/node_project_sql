@@ -94,10 +94,9 @@ describe('Tutor Services (Sequelize)', () => {
             int_rate: 100,
             str_timezone: 'UTC',
             str_status: 'active',
-            addArr_assignedStudents: jest.fn().mockResolvedValue(true),
-            removeArr_assignedStudents: jest.fn().mockResolvedValue(true),
-            removeAssignedStudent: jest.fn().mockResolvedValue(true), // Added for removeStudentService
-            hasAssignedStudent: jest.fn().mockResolvedValue(true),
+            addArr_assignedStudents: jest.fn().mockResolvedValue(true), // Corrected method name
+            removeArr_assignedStudents: jest.fn().mockResolvedValue(true), // Corrected method name
+            hasArr_assignedStudents: jest.fn().mockResolvedValue(true), // Corrected method name
             getArr_assignedStudents: jest.fn().mockResolvedValue([]),
             update: jest.fn().mockResolvedValue(true),
             destroy: jest.fn().mockResolvedValue(true),
@@ -129,7 +128,6 @@ describe('Tutor Services (Sequelize)', () => {
             query: {},
         };
     });
-
     describe('createtutorservice', () => {
         it('should create a tutor and a corresponding user account', async () => {
             const mockNewTutor = { id: 'new-tutor-uuid' };
@@ -532,7 +530,7 @@ describe('Tutor Services (Sequelize)', () => {
             db.User.findByPk.mockResolvedValue(mockUser);
             db.Tutor.findByPk.mockResolvedValue(mockTutor);
             db.Student.findByPk.mockResolvedValue(mockStudent);
-            mockTutor.hasAssignedStudent.mockResolvedValue(true);
+            mockTutor.hasArr_assignedStudents.mockResolvedValue(true);
 
             const result = await tutorServices.removeStudentService(req, tutorId);
 
@@ -543,8 +541,8 @@ describe('Tutor Services (Sequelize)', () => {
             expect(db.User.findByPk).toHaveBeenCalledWith('user-uuid-admin', { transaction: expect.any(Object) });
             expect(db.Tutor.findByPk).toHaveBeenCalledWith(tutorId, { transaction: expect.any(Object) });
             expect(db.Student.findByPk).toHaveBeenCalledWith('student-uuid-456', { transaction: expect.any(Object) });
-            expect(mockTutor.hasAssignedStudent).toHaveBeenCalledWith(mockStudent, { transaction: expect.any(Object) });
-            expect(mockTutor.removeAssignedStudent).toHaveBeenCalledWith(mockStudent, { transaction: expect.any(Object) });
+            expect(mockTutor.hasArr_assignedStudents).toHaveBeenCalledWith(mockStudent, { transaction: expect.any(Object) });
+            expect(mockTutor.removeArr_assignedStudents).toHaveBeenCalledWith(mockStudent, { transaction: expect.any(Object) });
             expect(mockStudent.update).toHaveBeenCalledWith(
                 { objectId_assignedTutor: null },
                 { transaction: expect.any(Object) }
@@ -583,7 +581,7 @@ describe('Tutor Services (Sequelize)', () => {
             db.User.findByPk.mockResolvedValue(mockUser);
             db.Tutor.findByPk.mockResolvedValue(mockTutor);
             db.Student.findByPk.mockResolvedValue(mockStudent);
-            mockTutor.hasAssignedStudent.mockResolvedValue(false);
+            mockTutor.hasArr_assignedStudents.mockResolvedValue(false);
 
             await expect(tutorServices.removeStudentService(req, tutorId)).rejects.toThrow(
                 new AppError('Failed to remove student from tutor: Student is not assigned to this tutor.', 400)

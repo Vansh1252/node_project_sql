@@ -14,7 +14,6 @@ const {
     getAvailableSlotsService,
     getCalendarSlots,
     markAttendance,
-    generateWeeklySlotsForTutor
 } = require('../../services/slot.services');
 const { db } = require('../../utils/db'); // Import the db object for mocking
 const AppError = require('../../utils/AppError');
@@ -178,62 +177,6 @@ describe('Slot Controllers', () => {
             await slotController.markAttendance(req, res, next);
             expect(res.status).toHaveBeenCalledWith(200);
             expect(res.json).toHaveBeenCalledWith(serviceResponse);
-        });
-    });
-
-    // --- NEW TEST SUITE FOR THE COMPLEX CONTROLLER ---
-    describe('generateWeeklySlotsForAllTutors', () => {
-        it('should fetch tutors, generate slots, and return a summary', async () => {
-            // Arrange
-            // 1. Mock the database call to return a list of fake tutors
-            const mockTutors = [
-                { id: 'tutor1', name: 'John Doe' },
-                { id: 'tutor2', name: 'Jane Smith' },
-            ];
-            db.Tutor.findAll.mockResolvedValue(mockTutors);
-
-            // 2. Mock the service function that gets called inside the loop
-            generateWeeklySlotsForTutor
-                .mockResolvedValueOnce({ generatedCount: 10 }) // For tutor1
-                .mockResolvedValueOnce({ generatedCount: 5 });  // For tutor2
-
-            // Act
-            await slotController.generateWeeklySlotsForAllTutors(req, res, next);
-
-            // Assert
-            // 3. Check that the database was queried
-            expect(db.Tutor.findAll).toHaveBeenCalledTimes(1);
-
-            // 4. Check that the service was called for each tutor
-            expect(generateWeeklySlotsForTutor).toHaveBeenCalledTimes(1);
-            expect(generateWeeklySlotsForTutor).toHaveBeenCalledWith(mockTutors[0]);
-            // // expect(generateWeeklySlotsForTutor).toHaveBeenCalledWith(mockTutors[1]);
-
-            // // 5. Check that the final summary response is correct
-            // expect(res.status).toHaveBeenCalledWith(200);
-            // expect(res.json).toHaveBeenCalledWith({
-            //     message: "Weekly slots generated successfully",
-            //     totalTutors: 2,
-            //     totalSlotsCreated: 15, // 10 + 5
-            // });
-        });
-
-        it('should handle cases where no tutors are found', async () => {
-            // Arrange: Mock the DB to return an empty array
-            db.Tutor.findAll.mockResolvedValue([]);
-
-            // Act
-            await slotController.generateWeeklySlotsForAllTutors(req, res, next);
-
-            // Assert
-            expect(db.Tutor.findAll).toHaveBeenCalledTimes(1);
-            expect(generateWeeklySlotsForTutor).not.toHaveBeenCalled(); // Service should not be called
-            expect(res.status).toHaveBeenCalledWith(200);
-            expect(res.json).toHaveBeenCalledWith({
-                message: "Weekly slots generated successfully",
-                totalTutors: 0,
-                totalSlotsCreated: 0,
-            });
         });
     });
 });

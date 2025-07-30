@@ -166,7 +166,7 @@ module.exports = (sequelize) => {
     Student.associate = (models) => {
         Student.belongsTo(models.User, { foreignKey: 'objectId_createdBy', as: 'obj_createdBy' });
         Student.belongsTo(models.Tutor, { foreignKey: 'objectId_assignedTutor', as: 'obj_assignedTutor' });
-        Student.belongsToMany(models.Tutor, { through: 'TutorStudents', foreignKey: 'obj_studentId', otherKey: 'obj_tutorId', as: 'assignedTutors' });
+        Student.belongsToMany(models.Tutor, { through: tables.TUTOR_STUDENTS, foreignKey: 'obj_studentId', otherKey: 'obj_tutorId', as: 'assignedTutors' });
         Student.hasMany(models.AvailabilitySlot, {
             foreignKey: 'obj_entityId',
             constraints: false,

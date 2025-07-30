@@ -671,7 +671,7 @@ exports.tutormastersservice = async (req) => {
     return { message: "Tutors fetched successfully!", statusCode: 200, data: tutors };
 };
 
-// R3MOVE STUDENT 
+// REMOVE STUDENT 
 exports.removeStudentService = async (req, tutorId) => {
     const { studentId } = req.body;
     const userId = req.user?.id;
@@ -698,13 +698,13 @@ exports.removeStudentService = async (req, tutorId) => {
         }
 
         // Check if the student is assigned to this tutor
-        const isAssigned = await tutor.hasAssignedStudent(student, { transaction }); // pass model instance
+        const isAssigned = await tutor.hasArr_assignedStudents(student, { transaction }); // pass model instance
         if (!isAssigned) {
             throw new AppError("Student is not assigned to this tutor.", 400);
         }
 
         // Remove association in the join table
-        await tutor.removeAssignedStudent(student, { transaction });
+        await tutor.removeArr_assignedStudents(student, { transaction });
 
         // Clear assignedTutor on the student
         await student.update({ objectId_assignedTutor: null }, { transaction });

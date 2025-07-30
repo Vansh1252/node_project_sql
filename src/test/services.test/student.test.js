@@ -7,6 +7,8 @@ const mailer = require('../../utils/mailer');
 const randompassword = require('../../utils/randompassword');
 const tutorServices = require('../../services/tutor.services');
 const { roles, userStatus } = require('../../constants/sequelizetableconstants');
+const { Op } = require('sequelize');
+
 
 // Mock dependencies
 jest.mock('../../utils/db', () => ({
@@ -383,41 +385,101 @@ describe('Student Services (Sequelize)', () => {
         });
     });
 
+
     describe('getonewithpaginationservice', () => {
-        it('should fetch paginated students', async () => {
-            req.query = { page: '1', limit: '10', name: 'Alice', status: userStatus.ACTIVE, tutorId: 'tutor-uuid-789' };
-            db.User.findByPk.mockResolvedValue(mockUser);
-            db.Student.findAndCountAll.mockResolvedValue({
+        let req;
+
+        beforeEach(() => {
+            req = {
+                query: {
+                    page: '1',
+                    limit: '2',
+                    name: 'Alice',
+                    status: 'ACTIVE',
+                    date: '2025-07-30',
+                    tutorId: 'tutor-id-123'
+                },
+                user: {
+                    id: 'admin-id-456'
+                }
+            };
+        });
+
+        it('should return paginated students with derived tutor name', async () => {
+            const mockData = {
                 count: 1,
-                rows: [{ ...mockStudent, obj_assignedTutor: mockTutor }],
-            });
+                rows: [{
+                    id: 'student-uuid-456',
+                    str_firstName: 'Alice',
+                    str_lastName: 'Johnson',
+                    str_email: 'alice@example.com',
+                    str_status: 'ACTIVE',
+                    int_studentNumber: 1001,
+                    arr_assessments: [],
+                    str_phoneNumber: '9876543210',
+                    objectId_assignedTutor: 'tutor-id-123',
+                    createdAt: new Date(),
+                    obj_assignedTutor: {
+                        str_firstName: 'John',
+                        str_lastName: 'Doe'
+                    }
+                }]
+            };
+
+            db.Student.findAndCountAll.mockResolvedValue(mockData);
 
             const result = await studentServices.getonewithpaginationservice(req);
 
-            expect(result).toEqual({
-                statusCode: 200,
-                data: expect.arrayContaining([
-                    expect.objectContaining({
-                        id: 'student-uuid-456',
-                        str_firstName: 'Alice',
-                        assignedTutorName: 'Jane Smith',
-                    }),
-                ]),
-                currentPage: 1,
-                totalPages: 1,
-                totalRecords: 1,
-            });
+            expect(result.statusCode).toBe(200);
+            expect(result.data).toHaveLength(1);
+            expect(result.data[0]).toHaveProperty('assignedTutorName', 'John Doe');
+            expect(result.currentPage).toBe(1);
+            expect(result.totalPages).toBe(1);
+            expect(result.totalRecords).toBe(1);
+
+            expect(db.Student.findAndCountAll).toHaveBeenCalledWith(expect.objectContaining({
+                where: expect.objectContaining({
+                    str_firstName: { [Op.like]: '%Alice%' },
+                    str_status: 'ACTIVE',
+                    objectId_assignedTutor: 'tutor-id-123',
+                    dt_startDate: expect.any(Object)
+                }),
+                offset: 0,
+                limit: 2,
+                order: [['createdAt', 'DESC']],
+                include: expect.any(Array),
+                attributes: expect.any(Array),
+                raw: true,
+                nest: true
+            }));
         });
 
-        it('should throw error for invalid date', async () => {
-            req.query = { date: 'invalid-date' };
-            db.User.findByPk.mockResolvedValue(mockUser);
+        it('should throw error if user is not authenticated', async () => {
+            req.user = null;
 
-            await expect(studentServices.getonewithpaginationservice(req)).rejects.toThrow(
-                new AppError('Invalid date format. Use YYYY-MM-DD.', 400)
-            );
+            await expect(studentServices.getonewithpaginationservice(req))
+                .rejects.toThrow('Unauthorized access');
+        });
+
+        it('should throw error on invalid page or limit', async () => {
+            req.query.page = '0';
+            await expect(studentServices.getonewithpaginationservice(req))
+                .rejects.toThrow('Page must be a positive integer.');
+
+            req.query.page = '1';
+            req.query.limit = '-5';
+            await expect(studentServices.getonewithpaginationservice(req))
+                .rejects.toThrow('Limit must be a positive integer.');
+        });
+
+        it('should throw error on invalid date format', async () => {
+            req.query.date = 'invalid-date';
+
+            await expect(studentServices.getonewithpaginationservice(req))
+                .rejects.toThrow('Invalid date format. Use YYYY-MM-DD.');
         });
     });
+
 
     describe('deletestudentservice', () => {
         it('should delete student and associated data', async () => {
@@ -541,39 +603,98 @@ describe('Student Services (Sequelize)', () => {
         });
     });
 
-    describe('assigntutorservices', () => {
-        it('should assign tutor to student', async () => {
-            req.body = { tutorId: 'tutor-uuid-789' };
-            db.User.findByPk.mockResolvedValue(mockUser);
-            db.Student.findByPk.mockResolvedValue(mockStudent);
-            db.Tutor.findByPk.mockResolvedValue(mockTutor);
+describe('assigntutorservices', () => {
+    let req, mockStudent, mockTutor, mockTransaction;
 
-            const result = await studentServices.assigntutorservices('student-uuid-456', req);
+    beforeEach(() => {
+        req = {
+            body: { tutorId: 'tutor-uuid-789' },
+            user: { id: 'admin-uuid-123' }
+        };
 
-            expect(result).toEqual({
-                statusCode: 200,
-                message: 'Student has been assigned tutor successfully',
-            });
-            expect(mockStudent.update).toHaveBeenCalledWith(
-                { objectId_assignedTutor: 'tutor-uuid-789' },
-                { transaction: mockTransaction }
-            );
-            expect(mockTutor.addAssignedStudent).toHaveBeenCalledWith(mockStudent, { transaction: mockTransaction });
-            expect(mockTransaction.commit).toHaveBeenCalled();
-        });
+        mockTransaction = {
+            commit: jest.fn(),
+            rollback: jest.fn(),
+            finished: false
+        };
 
-        it('should throw error if student already has tutor', async () => {
-            req.body = { tutorId: 'tutor-uuid-789' };
-            mockStudent.objectId_assignedTutor = 'tutor-uuid-789';
-            db.User.findByPk.mockResolvedValue(mockUser);
-            db.Student.findByPk.mockResolvedValue(mockStudent);
+        mockStudent = {
+            objectId_assignedTutor: null,
+            update: jest.fn().mockResolvedValue(),
+        };
 
-            await expect(studentServices.assigntutorservices('student-uuid-456', req)).rejects.toThrow(
-                new AppError('Student is already assigned a tutor.', 400)
-            );
-            expect(mockTransaction.rollback).toHaveBeenCalled();
+        mockTutor = {
+            addArr_assignedStudents: jest.fn().mockResolvedValue(),
+        };
+
+        db.sequelize.transaction = jest.fn().mockResolvedValue(mockTransaction);
+        db.Student.findByPk = jest.fn().mockResolvedValue(mockStudent);
+        db.Tutor.findByPk = jest.fn().mockResolvedValue(mockTutor);
+    });
+
+    it('should assign tutor to student and commit transaction', async () => {
+        const result = await studentServices.assigntutorservices('student-uuid-456', req);
+
+        expect(db.sequelize.transaction).toHaveBeenCalled();
+        expect(db.Student.findByPk).toHaveBeenCalledWith('student-uuid-456', { transaction: mockTransaction });
+        expect(db.Tutor.findByPk).toHaveBeenCalledWith('tutor-uuid-789', { transaction: mockTransaction });
+        expect(mockStudent.update).toHaveBeenCalledWith(
+            { objectId_assignedTutor: 'tutor-uuid-789' },
+            { transaction: mockTransaction }
+        );
+        expect(mockTutor.addArr_assignedStudents).toHaveBeenCalledWith(mockStudent, { transaction: mockTransaction });
+        expect(mockTransaction.commit).toHaveBeenCalled();
+
+        expect(result).toEqual({
+            statusCode: 200,
+            message: "Student has been assigned tutor successfully"
         });
     });
+
+    it('should throw 401 if user is not authorized', async () => {
+        req.user = null;
+        await expect(studentServices.assigntutorservices('student-id', req))
+            .rejects.toThrow('User is unauthorized!');
+    });
+
+    it('should throw 404 if student not found', async () => {
+        db.Student.findByPk = jest.fn().mockResolvedValue(null);
+        await expect(studentServices.assigntutorservices('student-id', req))
+            .rejects.toThrow('Student not found!');
+        expect(mockTransaction.rollback).toHaveBeenCalled();
+    });
+
+    it('should throw 404 if tutor not found', async () => {
+        db.Tutor.findByPk = jest.fn().mockResolvedValue(null);
+        await expect(studentServices.assigntutorservices('student-id', req))
+            .rejects.toThrow('Tutor not found!');
+        expect(mockTransaction.rollback).toHaveBeenCalled();
+    });
+
+    it('should throw 400 if student already assigned', async () => {
+        mockStudent.objectId_assignedTutor = 'already-assigned-tutor-id';
+        await expect(studentServices.assigntutorservices('student-id', req))
+            .rejects.toThrow('Student is already assigned a tutor.');
+        expect(mockTransaction.rollback).toHaveBeenCalled();
+    });
+
+    it('should retry on deadlock and succeed on second attempt', async () => {
+        const deadlockError = {
+            parent: { code: 'ER_LOCK_DEADLOCK' },
+            message: 'Deadlock'
+        };
+
+        // First attempt fails
+        db.Student.findByPk
+            .mockRejectedValueOnce(deadlockError)
+            .mockResolvedValueOnce(mockStudent);
+        db.Tutor.findByPk
+            .mockResolvedValue(mockTutor);
+
+        const result = await studentServices.assigntutorservices('student-uuid-456', req);
+        expect(result.statusCode).toBe(200);
+    });
+});
 
     describe('studentmastesrservice', () => {
         it('should fetch students with search', async () => {

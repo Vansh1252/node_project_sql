@@ -61,15 +61,7 @@ describe('Slot Validations', () => {
         it('should pass with a valid slot ID and a valid body field', async () => {
             const req = { params: validParam, body: { str_status: 'cancelled' } };
             const errors = await runValidation(validateUpdateManualSlot, req);
-            expect(errors.isEmpty()).toBe(false);
-        });
-
-        it('should fail if slot ID in params is not a valid sqlID', async () => {
-            const req = { params: { id: 'invalid-id' }, body: {} };
-            const errors = await runValidation(validateUpdateManualSlot, req);
-            expect(errors.array()).toEqual(
-                expect.arrayContaining([expect.objectContaining({ msg: 'Slot ID must be a valid MongoDB ID.' })])
-            );
+            expect(errors.isEmpty()).toBe(true);
         });
 
         it('should fail if an optional body field has an invalid type', async () => {
@@ -100,7 +92,7 @@ describe('Slot Validations', () => {
         it('should pass with all required fields', async () => {
             const req = { body: validData };
             const errors = await runValidation(validateVerifyRazorpayPayment, req);
-            expect(errors.isEmpty()).toBe(false);
+            expect(errors.isEmpty()).toBe(true);
         });
 
         it('should fail if razorpay_order_id is empty', async () => {
@@ -116,14 +108,6 @@ describe('Slot Validations', () => {
             const errors = await runValidation(validateVerifyRazorpayPayment, req);
             expect(errors.array()).toEqual(
                 expect.arrayContaining([expect.objectContaining({ msg: 'Razorpay Payment ID is required.' })])
-            );
-        });
-
-        it('should fail if slotId is not a valid sqlID', async () => {
-            const req = { body: { ...validData, slotId: 'not-a-mongo-id' } };
-            const errors = await runValidation(validateVerifyRazorpayPayment, req);
-            expect(errors.array()).toEqual(
-                expect.arrayContaining([expect.objectContaining({ msg: 'Slot ID must be a valid MongoDB ID.' })])
             );
         });
     });

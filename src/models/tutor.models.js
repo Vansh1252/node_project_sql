@@ -84,8 +84,7 @@ module.exports = (sequelize) => {
 
     Tutor.associate = (models) => {
         Tutor.belongsTo(models.User, { foreignKey: 'objectId_createdBy', as: 'createdBy' });
-        Tutor.belongsToMany(models.Student, { through: 'TutorStudents', foreignKey: 'obj_tutorId', otherKey: 'obj_studentId', as: 'arr_assignedStudents' });
-
+        Tutor.belongsToMany(models.Student, { through: tables.TUTOR_STUDENTS, foreignKey: 'obj_tutorId', otherKey: 'obj_studentId', as: 'arr_assignedStudents' });
         // Polymorphic association to AvailabilitySlot
         Tutor.hasMany(models.AvailabilitySlot, {
             foreignKey: 'obj_entityId',

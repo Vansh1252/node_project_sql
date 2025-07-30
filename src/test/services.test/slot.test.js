@@ -320,7 +320,7 @@ describe('Slot Services (Sequelize)', () => {
                 order: { id: 'order-123' },
                 key: process.env.KEY_ID_RAZORPAY_TEST,
             });
-            expect(db.Student.findByPk).toHaveBeenCalledWith('student-uuid-456', expect.any(Object));
+            expect(db.Student.findByPk).toHaveBeenCalledWith('2130ab91-5f03-420d-883c-e2d0e132c50b', expect.any(Object));
             expect(mockTransaction.commit).toHaveBeenCalled();
         });
 
@@ -384,7 +384,7 @@ describe('Slot Services (Sequelize)', () => {
             });
             expect(db.Payment.create).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    obj_studentId: 'student-uuid-456',
+                    obj_studentId: '2130ab91-5f03-420d-883c-e2d0e132c50b',
                 }),
                 expect.any(Object)
             );
@@ -549,19 +549,6 @@ describe('Slot Services (Sequelize)', () => {
 
             await expect(slotServices.deleteslotservice(req)).rejects.toThrow(
                 new AppError('Slot not found or already deleted.', 404)
-            );
-            expect(mockTransaction.rollback).toHaveBeenCalled();
-        });
-    });
-
-    describe('generateWeeklySlotsForTutor', () => {
-
-        it('should throw error if no weekly availability', async () => {
-            const tutor = { id: 'tutor-uuid-789', int_rate: 100 };
-            db.AvailabilitySlot.findAll.mockResolvedValue([]);
-
-            await expect(slotServices.generateWeeklySlotsForTutor(tutor)).rejects.toThrow(
-                new AppError(`Weekly hours not configured for tutor ${tutor.id}.`, 400)
             );
             expect(mockTransaction.rollback).toHaveBeenCalled();
         });

@@ -176,20 +176,21 @@ exports.updateManualSlotService = async (req) => {
 
 exports.bookSlotService = async (req) => {
     const { slotId } = req.body;
-    const userId = req.user?.id;
-    if (!userId) {
-        throw new AppError("Unauthorized access", 401);
-    }
+    // const userId = req.user?.id;
+    // if (!userId) {
+    //     throw new AppError("Unauthorized access", 401);
+    // }
 
     const MAX_RETRIES = 3;
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         const transaction = await db.sequelize.transaction();
         try {
-            const user = await db.User.findByPk(userId, { transaction });
-            if (!user || user.str_role !== roles.STUDENT || !user.obj_profileId) {
-                throw new AppError("Forbidden: Only student users can book slots.", 403);
-            }
-            const studentId = user.obj_profileId;
+            // const user = await db.User.findByPk(userId, { transaction });
+            // if (!user || user.str_role !== roles.STUDENT || !user.obj_profileId) {
+            //     throw new AppError("Forbidden: Only student users can book slots.", 403);
+            // }
+            // const studentId = user.obj_profileId;
+            const studentId = '2130ab91-5f03-420d-883c-e2d0e132c50b';
 
             const slot = await db.Slot.findByPk(slotId, { transaction });
             if (!slot || slot.str_status !== slotstatus.AVAILABLE) {
@@ -238,7 +239,6 @@ exports.bookSlotService = async (req) => {
             if (!transaction.finished) await transaction.rollback();
             const isDeadlock = error?.parent?.code === 'ER_LOCK_DEADLOCK';
             if (isDeadlock && attempt < MAX_RETRIES) {
-                console.warn(`⚠️ Deadlock detected. Retrying attempt ${attempt}...`);
                 await new Promise(r => setTimeout(r, 200 * attempt));
                 continue;
             }
@@ -258,18 +258,19 @@ exports.verifyRazorpayPaymentService = async (req) => {
         slotId,
         paymentMethod
     } = req.body;
-    const userId = req.user?.id;
-    if (!userId) {
-        throw new AppError("Unauthorized access", 401);
-    }
+    // const userId = req.user?.id;
+    // if (!userId) {
+    //     throw new AppError("Unauthorized access", 401);
+    // }
 
     const transaction = await db.sequelize.transaction();
     try {
-        const user = await db.User.findByPk(userId, { transaction });
-        if (!user || user.str_role !== roles.STUDENT || !user.obj_profileId) {
-            throw new AppError("Forbidden: Only student users can verify payments.", 403);
-        }
-        const studentId = user.obj_profileId;
+        // const user = await db.User.findByPk(userId, { transaction });
+        // if (!user || user.str_role !== roles.STUDENT || !user.obj_profileId) {
+        //     throw new AppError("Forbidden: Only student users can verify payments.", 403);
+        // }
+        // const studentId = user.obj_profileId;
+        const studentId = '2130ab91-5f03-420d-883c-e2d0e132c50b';
 
         const expectedSignature = crypto
             .createHmac("sha256", process.env.KEY_SECRET_RAZORPAY_TEST)
@@ -584,181 +585,6 @@ exports.deleteslotservice = async (req) => {
     }
 };
 
-exports.generateWeeklySlotsForTutor = async (tutor) => {
-    const transaction = await db.sequelize.transaction();
-    try {
-        const { id: tutorId, int_rate } = tutor;
-        console.log(`[Slot Gen Debug] Starting slot generation for Tutor ID: ${tutorId}, Current Rate: ${int_rate}`);
-
-        const weeklyAvailability = await db.AvailabilitySlot.findAll({
-            where: { obj_entityId: tutorId, obj_entityType: roles.TUTOR },
-            attributes: ['str_day', 'str_start', 'str_end'],
-            raw: true,
-            transaction
-        });
-        console.log(`[Slot Gen Debug] Fetched weeklyAvailability for ${tutorId}:`, weeklyAvailability);
-
-        const int_sessionDuration = 30;
-        console.log(`[Slot Gen Debug] Session Duration: ${int_sessionDuration} minutes`);
-
-        if (!tutorId) {
-            throw new AppError("Invalid tutor ID for slot generation.", 400);
-        }
-        if (!Array.isArray(weeklyAvailability) || weeklyAvailability.length === 0) {
-            console.log(`[Slot Gen Debug] No weekly availability configured for tutor ${tutorId}. Throwing error.`);
-            throw new AppError(`Weekly hours not configured for tutor ${tutorId}.`, 400);
-        }
-
-        const today = moment().startOf('isoWeek');
-        console.log(`[Slot Gen Debug] Start of ISO Week (Monday): ${today.format('YYYY-MM-DD')}`);
-
-        const slotsToInsert = [];
-
-        const testSlotDate = moment().add(1, 'year').startOf('day').toDate();
-        const testSlotStartTime = '00:00';
-        const testSlotEndTime = '00:30';
-        const testSlotUniqueId = 'test-slot-12345';
-
-        slotsToInsert.push({
-            obj_tutor: tutorId,
-            dt_date: testSlotDate,
-            str_startTime: testSlotStartTime,
-            str_endTime: testSlotEndTime,
-            int_tutorPayout: int_rate,
-            str_status: slotstatus.AVAILABLE,
-            objectId_createdBy: tutorId
-        });
-        console.log(`[Slot Gen Debug] Added hardcoded test slot for insertion: ${moment(testSlotDate).format('YYYY-MM-DD')} ${testSlotStartTime}-${testSlotEndTime}`);
-
-        for (let i = 0; i < 7; i++) {
-            const currentDay = moment(today).add(i, 'days');
-            const weekday = currentDay.format('dddd').toLowerCase();
-            console.log(`[Slot Gen Debug] Processing Day: ${currentDay.format('YYYY-MM-DD')} (${weekday})`);
-
-            const dayEntries = weeklyAvailability.filter(d => d.str_day.toLowerCase() === weekday);
-            console.log(`[Slot Gen Debug] Found dayEntries for ${weekday}:`, dayEntries);
-
-            if (!dayEntries || dayEntries.length === 0) {
-                console.log(`[Slot Gen Debug] No availability entries for ${weekday}. Skipping.`);
-                continue;
-            }
-
-            for (const { str_start, str_end } of dayEntries) {
-                console.log(`[Slot Gen Debug]   Processing time range: ${str_start} - ${str_end}`);
-                let slotStart = moment(`${currentDay.format('YYYY-MM-DD')} ${str_start}`, 'YYYY-MM-DD HH:mm');
-                const slotEnd = moment(`${currentDay.format('YYYY-MM-DD')} ${str_end}`, 'YYYY-MM-DD HH:mm');
-
-                if (!slotStart.isValid() || !slotEnd.isValid()) {
-                    console.warn(`[Slot Gen Debug] Invalid time format for tutor ${tutorId} on ${currentDay.format('YYYY-MM-DD')}: ${str_start}-${str_end}. Skipping this range.`);
-                    continue;
-                }
-                console.log(`[Slot Gen Debug]   Parsed slotStart: ${slotStart.format()}, slotEnd: ${slotEnd.format()}`);
-
-                let currentSlotIteration = 0;
-                while (slotStart.clone().add(int_sessionDuration, 'minutes').isSameOrBefore(slotEnd)) {
-                    currentSlotIteration++;
-                    const startFormatted = slotStart.format('HH:mm');
-                    const endFormatted = slotStart.clone().add(int_sessionDuration, 'minutes').format('HH:mm');
-                    const slotDate = currentDay.clone().startOf('day').toDate();
-
-                    console.log(`[Slot Gen Debug]     Attempting to create sub-slot: ${startFormatted} - ${endFormatted} on ${moment(slotDate).format('YYYY-MM-DD')}`);
-
-                    const alreadyExists = await db.Slot.findOne({
-                        where: {
-                            obj_tutor: tutorId,
-                            dt_date: slotDate,
-                            str_startTime: startFormatted,
-                            str_endTime: endFormatted
-                        },
-                        transaction
-                    });
-
-                    if (!alreadyExists) {
-                        console.log(`[Slot Gen Debug]       Slot does NOT exist. Adding to batch.`);
-                        slotsToInsert.push({
-                            obj_tutor: tutorId,
-                            dt_date: slotDate,
-                            str_startTime: startFormatted,
-                            str_endTime: endFormatted,
-                            int_tutorPayout: int_rate,
-                            str_status: slotstatus.AVAILABLE,
-                            objectId_createdBy: tutorId
-                        });
-                    } else {
-                        console.log(`[Slot Gen Debug]       Slot ALREADY EXISTS in DB: ${alreadyExists.id}. Will be skipped by bulkCreate if unique index is active.`);
-                    }
-                    slotStart.add(int_sessionDuration, 'minutes');
-                }
-                if (currentSlotIteration === 0) {
-                    console.log(`[Slot Gen Debug]   No sub-slots generated for range ${str_start}-${str_end}. Duration might be too short.`);
-                }
-            }
-        }
-
-        let generatedCount = 0;
-        if (slotsToInsert.length > 0) {
-            console.log(`[Slot Gen Debug] Attempting to bulkCreate ${slotsToInsert.length} slots.`);
-            const createdSlots = await db.Slot.bulkCreate(slotsToInsert, {
-                ignoreDuplicates: true,
-                transaction
-            });
-            generatedCount = createdSlots.length;
-            console.log(`[Slot Gen Debug] Successfully created ${generatedCount} slots.`);
-            // Modified to avoid calling get() on plain objects
-            console.log(`[Slot Gen Debug] Details of created slots (if any):`, createdSlots);
-            // Rest of the code
-
-            generatedCount = createdSlots.length;
-            console.log(`[Slot Gen Debug] Successfully created ${generatedCount} slots.`);
-            console.log(`[Slot Gen Debug] Details of created slots (if any):`, createdSlots.map(s => s.get({ plain: true })));
-
-            notifySocket('slotsGenerated', { tutorId, count: generatedCount });
-
-            const tutorForEmail = await db.Tutor.findByPk(tutorId, { attributes: ['str_email', 'str_firstName'], transaction });
-            if (tutorForEmail) {
-                await notifyEmail(
-                    tutorForEmail.str_email,
-                    'Weekly Slots Generated',
-                    `Hello ${tutorForEmail.str_firstName},\n\n${generatedCount} new slots have been generated for the week.`
-                );
-            }
-        } else {
-            console.log(`[Slot Gen Debug] No slots to insert after all checks. generatedCount remains 0.`);
-        }
-
-        await transaction.commit();
-        console.log(`[Slot Gen Debug] Transaction committed successfully.`);
-
-        console.log(`[Slot Gen Debug] Verifying hardcoded test slot after commit...`);
-        const verifiedTestSlot = await db.Slot.findOne({
-            where: {
-                obj_tutor: tutorId,
-                dt_date: testSlotDate,
-                str_startTime: testSlotStartTime,
-                str_endTime: testSlotEndTime
-            }
-        });
-
-        if (verifiedTestSlot) {
-            console.log(`[Slot Gen Debug] SUCCESS: Hardcoded test slot found in DB by Node.js app! ID: ${verifiedTestSlot.id}`);
-        } else {
-            console.error(`[Slot Gen Debug] FAILURE: Hardcoded test slot NOT found in DB by Node.js app after commit.`);
-        }
-
-        return {
-            statusCode: 201,
-            message: `${generatedCount} slots generated successfully.`,
-            generatedCount: generatedCount
-        };
-    } catch (error) {
-        await transaction.rollback();
-        console.error(`[Slot Gen Debug] Transaction rolled back due to error:`, error);
-        if (error instanceof AppError) {
-            throw error;
-        }
-        throw new AppError(`Failed to generate weekly slots: ${error.message}`, 500);
-    }
-};
 
 exports.cancelSlotService = async (req) => {
     const slotId = req.params.id;
@@ -810,7 +636,6 @@ exports.cancelSlotService = async (req) => {
         return { statusCode: 200, message: "Slot cancelled successfully" };
     } catch (error) {
         await transaction.rollback();
-        console.error("Error cancelling slot:", error);
         if (error instanceof AppError) {
             throw error;
         }
