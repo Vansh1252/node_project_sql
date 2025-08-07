@@ -3,7 +3,7 @@ stages:
 
 variables:
   SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
-  GIT_DEPTH: "0"
+  GIT_DEPTH: "0"  # Important for full git history required by Sonar
 
 sonarcloud-check:
   image:
@@ -17,7 +17,8 @@ sonarcloud-check:
   script:
     - sonar-scanner
   only:
-    - merge_requests
-    - master
-    - develop
-    - main
+    refs:
+      - merge_requests
+      - master
+      - develop
+      - main
