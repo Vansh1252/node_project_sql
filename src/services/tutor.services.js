@@ -264,7 +264,6 @@ exports.getonetutorservice = async (tutorId, requestingUserId) => {
         const pausedAssignedStudentsCount = assignedStudentDetails.filter(s => s.str_status === userStatus.PAUSED).length; // Use userStatus
         const totalAssignedStudentsCount = assignedStudentDetails.length;
 
-        const now = moment();
         const paymentHistory = await db.Payment.findAll({
             where: { obj_tutorId: tutor.id },
             include: [{ model: db.Student, as: 'student', attributes: ['str_firstName', 'str_lastName'] }],

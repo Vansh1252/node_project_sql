@@ -574,13 +574,6 @@ exports.assignTutorAndBookSlotsService = async (studentId, tutorId, selectedRecu
 
         const studentStartDate = moment(student.dt_startDate).startOf('day');
         const studentDischargeDate = student.dt_dischargeDate ? moment(student.dt_dischargeDate).endOf('day') : moment().add(1, 'year').endOf('day');
-
-        const oldAssignedTutorId = student.objectId_assignedTutor;
-        if (oldAssignedTutorId && oldAssignedTutorId !== tutorId) { // Direct comparison for UUID strings
-            const oldTutor = await db.Tutor.findByPk(oldAssignedTutorId, { transaction: session });
-        }
-        // Assign student to new tutor (use Sequelize association methods)
-        // Check if student is already associated with this tutor to prevent redundant association adds
         const isStudentAssignedToTutor = await tutor.hasAssignedStudent(student, { transaction: session }); // Check if student is already in assignedStudents
         if (!isStudentAssignedToTutor) {
             await tutor.addAssignedStudent(student, { transaction: session });
