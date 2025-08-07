@@ -6,7 +6,10 @@ exports.tables = {
     SLOT: "tb_slots",
     PAYMENT: "tb_payments",
     AVAILABILITY_SLOT: "tb_availability_slots", 
-    TUTOR_STUDENTS: "tb_tutor_students"   
+    TUTOR_STUDENTS: "tb_tutor_students" ,
+    RECURRING_BOOKING_PATTERN: "tb_recurring_booking_patterns",
+    WEEKLY_HOUR_BLOCK: "tb_weekly_hour_blocks",
+    REFRESH_TOKEN: "tb_refresh_tokens" 
 };
 
 exports.roles = {

@@ -1,178 +1,134 @@
+// models/Student.js
 const { DataTypes } = require('sequelize');
-const { userStatus, tables } = require('../constants/sequelizetableconstants');
+const { tables, userStatus } = require('../constants/sequelizetableconstants');
 
 module.exports = (sequelize) => {
-    const Student = sequelize.define('Student', {
+    const Student = sequelize.define(tables.STUDENT, {
         id: {
             type: DataTypes.UUID,
             defaultValue: DataTypes.UUIDV4,
             primaryKey: true,
-            allowNull: false
+            allowNull: false,
         },
         int_studentNumber: {
             type: DataTypes.INTEGER,
-            unique: true,
             allowNull: false,
-            field: 'int_studentNumber'
+            unique: true,
         },
         str_firstName: {
             type: DataTypes.STRING,
             allowNull: false,
-            field: 'str_firstName'
         },
         str_lastName: {
             type: DataTypes.STRING,
             allowNull: false,
-            field: 'str_lastName'
         },
         str_familyName: {
             type: DataTypes.STRING,
             allowNull: false,
-            field: 'str_familyName'
         },
         str_grade: {
             type: DataTypes.STRING,
             allowNull: false,
-            field: 'str_grade'
         },
         str_year: {
             type: DataTypes.STRING,
             allowNull: false,
-            field: 'str_year'
         },
         str_email: {
             type: DataTypes.STRING,
             allowNull: false,
-            unique: true,
-            field: 'str_email'
+            unique: true, // Unique at student profile level
+            validate: {
+                isEmail: true,
+            },
         },
         str_phoneNumber: {
             type: DataTypes.STRING,
             allowNull: false,
-            field: 'str_phoneNumber'
+            unique: true,
         },
         str_address: {
             type: DataTypes.STRING,
             allowNull: false,
-            field: 'str_address'
         },
         str_city: {
             type: DataTypes.STRING,
             allowNull: false,
-            field: 'str_city'
         },
         str_state: {
             type: DataTypes.STRING,
             allowNull: false,
-            field: 'str_state'
         },
         str_country: {
             type: DataTypes.STRING,
             allowNull: false,
-            field: 'str_country'
         },
         dt_startDate: {
-            type: DataTypes.DATEONLY,
+            type: DataTypes.DATE,
             allowNull: false,
-            field: 'dt_startDate'
         },
         dt_dischargeDate: {
-            type: DataTypes.DATEONLY,
+            type: DataTypes.DATE,
             allowNull: true,
-            field: 'dt_dischargeDate'
         },
         bln_accountCreated: {
             type: DataTypes.BOOLEAN,
             defaultValue: false,
-            field: 'bln_accountCreated'
+            allowNull: false,
         },
         str_referralSource: {
             type: DataTypes.STRING,
             allowNull: true,
-            field: 'str_referralSource'
         },
         str_meetingLink: {
-            type: DataTypes.STRING,
+            type: DataTypes.STRING(2048), // URL can be long
             allowNull: true,
-            field: 'str_meetingLink'
         },
-        objectId_assignedTutor: {
+        objectId_assignedTutor: { // Renamed from objectId_assignedTutor
             type: DataTypes.UUID,
+            references: {
+                model: tables.TUTOR, // Name of the Tutor table
+                key: 'id',
+            },
             allowNull: true,
-            field: 'objectId_assignedTutor'
         },
         str_timezone: {
             type: DataTypes.STRING,
             allowNull: true,
-            field: 'str_timezone'
         },
         int_sessionDuration: {
             type: DataTypes.INTEGER,
             allowNull: true,
-            field: 'int_sessionDuration'
-        },
-        str_paymentMethod: {
-            type: DataTypes.STRING,
-            allowNull: true,
-            field: 'str_paymentMethod'
-        },
-        int_transactionFee: {
-            type: DataTypes.FLOAT,
-            allowNull: true,
-            field: 'int_transactionFee'
-        },
-        int_totalAmount: {
-            type: DataTypes.FLOAT,
-            allowNull: true,
-            field: 'int_totalAmount'
-        },
-        int_tutorPayout: {
-            type: DataTypes.FLOAT,
-            allowNull: true,
-            field: 'int_tutorPayout'
-        },
-        int_profitWeek: {
-            type: DataTypes.FLOAT,
-            allowNull: true,
-            field: 'int_profitWeek'
-        },
-        int_profitMonth: {
-            type: DataTypes.FLOAT,
-            allowNull: true,
-            field: 'int_profitMonth'
-        },
-        arr_assessments: {
-            type: DataTypes.JSON,
-            allowNull: true,
-            defaultValue: [],
-            field: 'arr_assessments'
         },
         str_status: {
             type: DataTypes.ENUM(userStatus.ACTIVE, userStatus.INACTIVE, userStatus.PAUSED),
             defaultValue: userStatus.ACTIVE,
-            field: 'str_status'
-        },
-        objectId_createdBy: {
-            type: DataTypes.UUID,
             allowNull: false,
-            field: 'objectId_createdBy'
+        },
+        objectId_createdBy: { // User who created this student profile
+            type: DataTypes.UUID,
+            references: {
+                model: tables.USERS, // Name of the User table
+                key: 'id',
+            },
+            allowNull: false,
         }
     }, {
-        tableName: tables.STUDENT,
         timestamps: true,
-        underscored: true
+        tableName: tables.STUDENT,
+            underscored: true, // ✅ recommended
+
     });
 
-    Student.associate = (models) => {
-        Student.belongsTo(models.User, { foreignKey: 'objectId_createdBy', as: 'obj_createdBy' });
-        Student.belongsTo(models.Tutor, { foreignKey: 'objectId_assignedTutor', as: 'obj_assignedTutor' });
-        Student.belongsToMany(models.Tutor, { through: tables.TUTOR_STUDENTS, foreignKey: 'obj_studentId', otherKey: 'obj_tutorId', as: 'assignedTutors' });
-        Student.hasMany(models.AvailabilitySlot, {
-            foreignKey: 'obj_entityId',
-            constraints: false,
-            scope: { obj_entityType: 'Student' },
-            as: 'arr_weeklyAvailability'
-        });
+      Student.associate = (db) => {
+        Student.belongsTo(db.User, { foreignKey: 'objectId_createdBy', as: 'createdBy' });
+        Student.belongsTo(db.Tutor, { foreignKey: 'objectId_assignedTutor', as: 'assignedTutor' });
+        Student.hasMany(db.Slot, { foreignKey: 'obj_student', as: 'slots' }); // obj_student in Slot model
+        Student.hasMany(db.Payment, { foreignKey: 'obj_studentId', as: 'payments' }); // obj_studentId in Payment model
+        Student.hasMany(db.RecurringBookingPattern, { foreignKey: 'obj_student', as: 'recurringPatterns' }); // obj_student in RecurringBookingPattern
+        // Student.hasMany(db.Assessment, { foreignKey: 'studentId', as: 'assessments' }); // If you re-add Assessment
+        // Student.hasMany(db.StudentAuditLog, { foreignKey: 'studentId', as: 'auditLogs' }); // If you re-add StudentAuditLog
     };
 
     return Student;

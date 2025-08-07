@@ -1,56 +1,139 @@
-// src/services/tutor.services.js
+// services/tutor.services.js
+
 const bcrypt = require('bcrypt');
-const { db } = require('../utils/db'); // ✅ Import the db object
-const AppError = require('../utils/AppError');
+const crypto = require('crypto');
+const { Op } = require('sequelize'); // Import Sequelize's Operators
+const { sequelize, db } = require('../utils/db'); // Import sequelize instance and db object with models
 const mailer = require('../utils/mailer');
-const { roles, userStatus, slotstatus, attendnace } = require('../constants/sequelizetableconstants'); // ✅ Use Sequelize constants
-const randompassword = require('../utils/randompassword');
-const { notifyEmail, notifySocket } = require('../utils/notification');
-const { Op } = require('sequelize'); // ✅ Import Sequelize Operators
+const AppError = require('../utils/AppError');
+const { roles, userStatus, slotstatus, paymentstatus, tables } = require('../constants/sequelizetableconstants'); // Ensure correct constants
 
-// CREATE TUTOR SERVICE
+const _validateAndFindTutor = async (tutorId, requestingUserId, transaction = null) => {
+    if (!requestingUserId) {
+        throw new AppError("Unauthorized access", 401);
+    }
+    const tutor = await db.Tutor.findByPk(tutorId, { transaction });
+    if (!tutor) {
+        throw new AppError("Tutor not found", 404);
+    }
+    return tutor;
+};
 
-exports.createtutorservice = async (req) => {
+const _checkDuplicateTutorContact = async (tutorId, email, phoneNumber, transaction = null) => {
+    const query = {
+        id: { [Op.ne]: tutorId }, // Exclude current tutor
+        [Op.or]: []
+    };
+    if (email) query[Op.or].push({ str_email: email });
+    if (phoneNumber) query[Op.or].push({ str_phoneNumber: phoneNumber });
+
+    if (query[Op.or].length > 0) {
+        const existingTutor = await db.Tutor.findOne({ where: query, transaction });
+        if (existingTutor) {
+            throw new AppError("Email or Phone Number already used by another tutor", 400);
+        }
+    }
+};
+
+const _applyUpdatesToTutor = async (tutor, updateFields, transaction) => {
     const {
-        firstName, lastName, email, phoneNumber,
-        address, city, province, postalCode,
-        country, rate, timezone, weeklyHours
-    } = req.body;
+        firstName, lastName, email, phoneNumber, address, city, province,
+        postalCode, country, rate, timezone, status: newStatus, weeklyHours // weeklyHours here is array of objects
+    } = updateFields;
 
-    const userId = req.user?.id;
-    if (!userId) throw new AppError("Unauthorized access", 401);
-    const user = await db.User.findByPk(userId);
-    if (!user) throw new AppError("User not found", 404);
+    const updatedFields = {};
 
-
-    if (!firstName || !lastName || !email || !phoneNumber || !address || !city || !province || !postalCode || !country || rate === undefined || !timezone) {
-        throw new AppError("Missing required fields", 400);
+    if (firstName !== undefined) updatedFields.str_firstName = firstName;
+    if (lastName !== undefined) updatedFields.str_lastName = lastName;
+    if (email !== undefined) updatedFields.str_email = email;
+    if (phoneNumber !== undefined) updatedFields.str_phoneNumber = phoneNumber;
+    if (address !== undefined) updatedFields.str_address = address;
+    if (city !== undefined) updatedFields.str_city = city;
+    if (province !== undefined) updatedFields.str_province = province;
+    if (postalCode !== undefined) updatedFields.str_postalCode = postalCode;
+    if (country !== undefined) updatedFields.str_country = country;
+    if (rate !== undefined) updatedFields.int_rate = rate;
+    if (timezone !== undefined) updatedFields.str_timezone = timezone;
+    if (newStatus && [userStatus.ACTIVE, userStatus.INACTIVE].includes(newStatus)) {
+        updatedFields.str_status = newStatus;
     }
 
-    const existingTutor = await db.Tutor.findOne({
-        where: {
-            [Op.or]: [
-                { str_email: email },
-                { str_phoneNumber: phoneNumber }
-            ]
-        }
+    await tutor.update(updatedFields, { transaction });
+
+    // Handle weeklyHours update (replace all existing weekly blocks)
+    if (Array.isArray(weeklyHours)) {
+        // Delete all existing weekly hour blocks for this tutor
+        await db.WeeklyHourBlock.destroy({ where: { tutorId: tutor.id }, transaction });
+
+        // Create new weekly hour blocks
+        const newBlocks = weeklyHours.map(dayObj => ({
+            str_day: dayObj.day,
+            str_start: dayObj.start, // Assuming 'start' from frontend is 'HH:MM'
+            str_end: dayObj.end,     // Assuming 'end' from frontend is 'HH:MM'
+            int_startMinutes: _convertToMinutes(dayObj.start),
+            int_endMinutes: _convertToMinutes(dayObj.end),
+            tutorId: tutor.id,
+        }));
+        await db.WeeklyHourBlock.bulkCreate(newBlocks, { transaction });
+    }
+};
+
+// Helper to synchronize user model details with tutor updates
+const _syncUserWithTutor = async (tutorId, firstName, lastName, email, currentTutor, transaction) => {
+    const user = await db.User.findOne({
+        where: { obj_profileId: tutorId, str_profileType: tables.TUTOR },
+        transaction
     });
-    if (existingTutor) throw new AppError("Email or Phone Number already used", 400);
 
-    const rawPassword = randompassword();
-    const hashedPassword = await bcrypt.hash(rawPassword, 12);
+    if (user) {
+        const updatedFullName = `${firstName !== undefined ? firstName : currentTutor.str_firstName} ${lastName !== undefined ? lastName : currentTutor.str_lastName}`.trim();
+        const userUpdateFields = {};
+        if (fullName !== undefined) userUpdateFields.str_fullName = updatedFullName;
+        if (email !== undefined) userUpdateFields.str_email = email;
 
-    const transaction = await db.sequelize.transaction();
+        await user.update(userUpdateFields, { transaction });
+    }
+};
 
+
+// --- Service Functions ---
+
+// CREATETUTOR
+exports.createtutorservice = async (tutorData, requestingUserId) => {
+    const transaction = await sequelize.transaction(); // Start transaction
     try {
-        const tutorUser = await db.User.create({
+        const {
+            firstName, lastName, email, phoneNumber, address, city, province,
+            postalCode, country, rate, timezone, weeklyHours // weeklyHours are now an array of objects
+        } = tutorData;
+
+        // 1. Validate required fields
+        if (!firstName || !lastName || !email || !phoneNumber || !address || !city || !province || !postalCode || !country || rate === undefined || timezone === undefined) {
+            throw new AppError("Missing required fields for tutor profile.", 400);
+        }
+
+        // 2. Check for existing tutor contact (email/phone)
+        await _checkDuplicateTutorContact(null, email, phoneNumber, transaction); // Pass null for tutorId as it's new
+
+        // 3. Check if a user with this email already exists
+        const existingUserWithEmail = await db.User.findOne({ where: { str_email: email }, transaction });
+        if (existingUserWithEmail) throw new AppError("A user account with this email already exists.", 400);
+
+        // 4. Generate and hash password for the new tutor's user account
+        const rawPassword = crypto.randomBytes(8).toString('hex'); // Generate random password
+        const hashedPassword = await bcrypt.hash(rawPassword, 12);
+
+        // 5. Create user account with TUTOR role
+        const user = await db.User.create({
             str_fullName: `${firstName} ${lastName}`,
             str_email: email,
             str_password: hashedPassword,
-            str_role: roles.TUTOR
+            str_role: roles.TUTOR,
+            str_status: userStatus.ACTIVE // Use userStatus for User model
         }, { transaction });
 
-        const createTutor = await db.Tutor.create({
+        // 6. Create tutor profile
+        const tutor = await db.Tutor.create({
             str_firstName: firstName,
             str_lastName: lastName,
             str_email: email,
@@ -62,658 +145,493 @@ exports.createtutorservice = async (req) => {
             str_country: country,
             int_rate: rate,
             str_timezone: timezone,
-            str_status: userStatus.ACTIVE,
-            objectId_createdBy: userId
+            str_status: userStatus.ACTIVE, // Use 'status' for Tutor model
+            objectId_createdBy: user.id // Link to User ID
         }, { transaction });
 
-        await tutorUser.update({
-            obj_profileId: createTutor.id,
-            obj_profileType: roles.TUTOR
+        // 7. Update User with profileId and profileType (polymorphic association)
+        await user.update({
+            obj_profileId: tutor.id,
+            str_profileType: tables.TUTOR // Use table name for profile type
         }, { transaction });
 
+        // 8. Create WeeklyHourBlocks for the tutor
         if (Array.isArray(weeklyHours) && weeklyHours.length > 0) {
-            const availabilitySlots = [];
-            for (const dayObj of weeklyHours) {
+            const newWeeklyHours = [];
+
+            weeklyHours.forEach(dayObj => {
+                // Make sure dayObj.slots exists
                 if (Array.isArray(dayObj.slots)) {
-                    for (const slot of dayObj.slots) {
-                        availabilitySlots.push({
-                            obj_entityId: createTutor.id,
-                            obj_entityType: roles.TUTOR,
+                    dayObj.slots.forEach(slot => {
+                        const [startHour, startMin] = slot.start.split(':').map(Number);
+                        const [endHour, endMin] = slot.end.split(':').map(Number);
+
+                        const startMinutes = startHour * 60 + startMin;
+                        const endMinutes = endHour * 60 + endMin;
+
+                        if (isNaN(startMinutes) || isNaN(endMinutes) || startMinutes >= endMinutes) {
+                            throw new AppError("Invalid time format or start time not before end time", 400);
+                        }
+
+                        newWeeklyHours.push({
                             str_day: dayObj.day,
                             str_start: slot.start,
-                            str_end: slot.end
+                            str_end: slot.end,
+                            int_start_minutes: startMinutes,
+                            int_end_minutes: endMinutes,
+                            tutorId: tutor.id
                         });
-                    }
+                    });
                 }
-            }
-            if (availabilitySlots.length > 0) {
-                await db.AvailabilitySlot.bulkCreate(availabilitySlots, { transaction });
-            }
+            });
+
+            await db.WeeklyHourBlock.bulkCreate(newWeeklyHours, { transaction });
         }
 
+
+        // 9. Send welcome email
         await mailer.sendMail({
             to: email,
-            from: 'vanshsanklecha36@gmail.com',
-            subject: 'Welcome to Our Platform!',
-            text: `Hello ${firstName},\n\nWelcome to our platform!\nYour email: ${email}\nPassword: ${rawPassword}\n\nLogin to view your tutor profile and schedule sessions.`
+            from: process.env.EMAIL_FROM, // Ensure this is configured
+            subject: 'Welcome to Our Platform! Your Tutor Account Details',
+            text: `Hello ${firstName},\n\nWelcome to our platform as a tutor!\nYour email: ${email}\nTemporary Password: ${rawPassword}\n\nPlease login and consider changing your password for security.\n\nLogin URL: ${process.env.FRONTEND_URL}/login`
         });
 
-        await transaction.commit();
+        await transaction.commit(); // Commit transaction
+        return { statusCode: 201, message: "Tutor created successfully.", tutorId: tutor.id };
 
-        return { statusCode: 201, message: "Tutor created successfully." };
+    } catch (error) {
+        await transaction.rollback(); // Rollback on error
+        console.error("Error in createtutorservice:", error);
+        throw error;
+    }
+};
+
+// UPDATETUTOR
+exports.updatetutorservice = async (tutorId, updateData, requestingUserId) => {
+    const transaction = await sequelize.transaction();
+    try {
+        // 1. Validate and find tutor
+        const tutor = await _validateAndFindTutor(tutorId, requestingUserId, transaction);
+
+        // 2. Check for duplicate contact info (email/phone)
+        const { email, phoneNumber } = updateData;
+        if (email || phoneNumber) {
+            await _checkDuplicateTutorContact(tutor.id, email, phoneNumber, transaction);
+        }
+
+        // 3. Apply updates to the tutor document and manage weekly hours
+        await _applyUpdatesToTutor(tutor, updateData, transaction);
+
+        // 4. Sync associated user model (str_fullName and str_email)
+        await _syncUserWithTutor(tutor.id, updateData.firstName, updateData.lastName, updateData.email, tutor, transaction);
+
+        await transaction.commit();
+        return { statusCode: 200, message: "Tutor updated successfully", data: tutor.toJSON() }; // Return JSON representation
+
     } catch (error) {
         await transaction.rollback();
-        throw new AppError(`Failed to create tutor: ${error.message}`, 500);
+        console.error("Error in updatetutorservice:", error);
+        throw error;
     }
 };
 
-// UPDATE TUTOR SERVICE
-exports.updatetutorservice = async (req) => {
-    const tutorId = req.params.id;
-    const userId = req.user?.id;
-    if(!tutorId){
-        throw new AppError('Tutor not found',401)
-    }
-    if (!userId) {
-        throw new AppError("Unauthorized access", 401);
-    }
-    const MAX_RETRIES = 3;
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-        const transaction = await db.sequelize.transaction();
-        try {
-            const tutor = await db.Tutor.findByPk(tutorId, { transaction });
-            if (!tutor) {
-                throw new AppError("Tutor not found", 404);
-            }
-
-            const {
-                firstName,
-                lastName,
-                email,
-                phoneNumber,
-                address,
-                city,
-                province,
-                postalCode,
-                country,
-                rate,
-                timezone,
-                weeklyHours,
-                status: newStatus,
-                assignedStudents,
-            } = req.body;
-
-            // Check for existing email or phone (excluding self)
-            const existingTutor = await db.Tutor.findOne({
-                where: {
-                    [Op.or]: [
-                        { str_email: email },
-                        { str_phoneNumber: phoneNumber }
-                    ],
-                    id: { [Op.ne]: tutorId }
-                },
-                transaction
-            });
-            if (existingTutor) {
-                throw new AppError("Email or Phone Number already used", 400);
-            }
-
-            // Prepare update data for Tutor model
-            const tutorUpdateData = {};
-            if (firstName) tutorUpdateData.str_firstName = firstName;
-            if (lastName) tutorUpdateData.str_lastName = lastName;
-            if (email) tutorUpdateData.str_email = email;
-            if (phoneNumber) tutorUpdateData.str_phoneNumber = phoneNumber;
-            if (address) tutorUpdateData.str_address = address;
-            if (city) tutorUpdateData.str_city = city;
-            if (province) tutorUpdateData.str_province = province;
-            if (postalCode) tutorUpdateData.str_postalCode = postalCode;
-            if (country) tutorUpdateData.str_country = country;
-            if (rate !== undefined) tutorUpdateData.int_rate = rate;
-            if (timezone) tutorUpdateData.str_timezone = timezone;
-            if (newStatus && [userStatus.ACTIVE, userStatus.INACTIVE].includes(newStatus)) tutorUpdateData.str_status = newStatus;
-
-            // Update Tutor model
-            if (Object.keys(tutorUpdateData).length > 0) {
-                await tutor.update(tutorUpdateData, { transaction });
-            }
-
-            // Sync User model if email or name changed
-            const user = await db.User.findOne({
-                where: { obj_profileId: tutorId, str_role: roles.TUTOR },
-                transaction
-            });
-            if (user) {
-                const userUpdateData = {};
-                if (firstName || lastName) userUpdateData.str_fullName = `${firstName || tutor.str_firstName} ${lastName || tutor.str_lastName}`;
-                if (email) userUpdateData.str_email = email;
-                if (Object.keys(userUpdateData).length > 0) {
-                    await user.update(userUpdateData, { transaction });
-                }
-            }
-
-            // Update weekly availability slots
-            if (Array.isArray(weeklyHours)) {
-                // Delete existing slots
-                await db.AvailabilitySlot.destroy({
-                    where: { obj_entityId: tutor.id, obj_entityType: roles.TUTOR },
-                    transaction
-                });
-
-                const newAvailabilitySlots = [];
-                for (const dayObj of weeklyHours) {
-                    if (Array.isArray(dayObj.slots)) {
-                        for (const slot of dayObj.slots) {
-                            newAvailabilitySlots.push({
-                                obj_entityId: tutor.id,
-                                obj_entityType: roles.TUTOR,
-                                str_day: dayObj.day,
-                                str_start: slot.start,
-                                str_end: slot.end
-                            });
-                        }
-                    }
-                }
-                if (newAvailabilitySlots.length > 0) {
-                    await db.AvailabilitySlot.bulkCreate(newAvailabilitySlots, { transaction });
-                }
-            }
-
-            // Handle assigned students (many-to-many)
-            if (Array.isArray(assignedStudents)) {
-                // Fetch current assigned students
-                const currentAssignedStudents = await tutor.getArr_assignedStudents({ transaction });
-                const currentStudentIds = new Set(currentAssignedStudents.map(s => s.id));
-                const newStudentIds = new Set(assignedStudents);
-
-                // Students to add
-                const studentsToAdd = [...newStudentIds].filter(id => !currentStudentIds.has(id));
-                if (studentsToAdd.length > 0) {
-                    await tutor.addArr_assignedStudents(studentsToAdd, { transaction });
-                    await db.Student.update(
-                        { objectId_assignedTutor: tutor.id },
-                        { where: { id: { [Op.in]: studentsToAdd } }, transaction }
-                    );
-                }
-
-                // Students to remove
-                const studentsToRemove = [...currentStudentIds].filter(id => !newStudentIds.has(id));
-                if (studentsToRemove.length > 0) {
-                    await tutor.removeArr_assignedStudents(studentsToRemove, { transaction });
-
-                    await db.Student.update(
-                        { objectId_assignedTutor: null },
-                        { where: { id: { [Op.in]: studentsToRemove } }, transaction }
-                    );
-                }
-            }
-
-            // Reload tutor to get updated data
-            await tutor.reload({ transaction });
-
-            await transaction.commit();
-            return { statusCode: 200, message: "Tutor updated successfully", data: tutor };
-
-        } catch (error) {
-            if (!transaction.finished) await transaction.rollback();
-
-            const isDeadlock = error?.parent?.code === 'ER_LOCK_DEADLOCK';
-            if (isDeadlock && attempt < MAX_RETRIES) {
-                console.warn(`⚠️ Deadlock detected. Retrying attempt ${attempt}...`);
-                await new Promise(r => setTimeout(r, 200 * attempt)); // backoff
-                continue;
-            }
-
-            throw new AppError(`Failed to create student: ${error.message}`, 500);
-        }
-    }
-};
-
-// GET ONE TUTOR DETAILS SERVICE
-exports.getonetutorservice = async (req) => {
-    const tutorId = req.params.id;
-    const userId = req.user?.id;
+// GETONETUTOR
+exports.getonetutorservice = async (tutorId, requestingUserId) => {
+    const transaction = await sequelize.transaction(); // Use transaction for consistent read
     try {
-        if (!tutorId) {
-            throw new AppError("Tutor not found", 404);
+        if (!requestingUserId) throw new AppError("Unauthorized access", 401);
+
+        const tutor = await db.Tutor.findByPk(tutorId, {
+            include: [
+                { model: db.WeeklyHourBlock, as: 'weeklyHours' }, // Include weekly hours
+                {
+                    model: db.Student,
+                    as: 'assignedStudents', // Include assigned students
+                    attributes: ['id', 'int_studentNumber', 'str_firstName', 'str_lastName', 'str_status', 'dt_startDate', 'dt_dischargeDate', 'str_timezone', 'int_sessionDuration', 'str_meetingLink'],
+                    required: false // LEFT JOIN
+                }
+            ],
+            transaction // Pass transaction to fetch operations
+        });
+
+        if (!tutor) throw new AppError('Tutor not found', 404);
+
+        // --- Calculate Summary Metrics ---
+        const assignedStudentDetails = tutor.assignedStudents || []; // Ensure it's an array
+        const activeAssignedStudentsCount = assignedStudentDetails.filter(s => s.str_status === userStatus.ACTIVE).length; // Use userStatus
+        const pausedAssignedStudentsCount = assignedStudentDetails.filter(s => s.str_status === userStatus.PAUSED).length; // Use userStatus
+        const totalAssignedStudentsCount = assignedStudentDetails.length;
+
+        const now = moment();
+        const oneWeekAgo = now.clone().subtract(7, 'days').toDate();
+        const oneMonthAgo = now.clone().subtract(30, 'days').toDate();
+
+        const weeklyProfit = await db.Payment.sum('int_totalAmount', {
+            where: {
+                obj_tutorId: tutor.id,
+                str_status: paymentstatus.COMPLETED,
+                createdAt: { [Op.gte]: oneWeekAgo }
+            },
+            transaction // Pass transaction
+        }) || 0;
+
+        const monthlyProfit = await db.Payment.sum('int_totalAmount', {
+            where: {
+                obj_tutorId: tutor.id,
+                str_status: paymentstatus.COMPLETED,
+                createdAt: { [Op.gte]: oneMonthAgo }
+            },
+            transaction // Pass transaction
+        }) || 0;
+
+        const paymentHistory = await db.Payment.findAll({
+            where: { obj_tutorId: tutor.id },
+            include: [{ model: db.Student, as: 'student', attributes: ['str_firstName', 'str_lastName'] }],
+            order: [['createdAt', 'DESC']],
+            transaction // Pass transaction
+        });
+
+        // --- Get Dynamically Generated Available Slots for Display Grid ---
+        const defaultDisplayDurationMinutes = 30;
+        const plannedStartDate = moment().format('YYYY-MM-DD');
+        const plannedEndDate = moment().add(3, 'months').format('YYYY-MM-DD'); // Default 3 months
+
+        const generatedSlotsResult = await db.sequelize.query(
+            `SELECT * FROM your_slot_generation_view_or_function_for_tutor_display('${tutorId}', '${defaultDisplayDurationMinutes}', '${plannedStartDate}', '${plannedEndDate}')`
+            , {
+                type: sequelize.QueryTypes.SELECT,
+                transaction // Pass transaction here if the view/function interacts with data being locked
+            }
+        );
+        // Assuming slotService.getGeneratedAvailableSlotsForTutorDisplayService handles its own session.
+        const dynamicallyGeneratedSlots = (await slotService.getGeneratedAvailableSlotsForTutorDisplayService(
+            tutor.id, // Tutor ID
+            { durationMinutes: defaultDisplayDurationMinutes, plannedStartDate, plannedEndDate }, // queryParams
+            requestingUserId // User ID
+        )).data; // Extract data from service response
+
+
+        await transaction.commit();
+        return {
+            statusCode: 200,
+            data: {
+                id: tutor.id,
+                firstName: tutor.str_firstName,
+                lastName: tutor.str_lastName,
+                email: tutor.str_email,
+                phoneNumber: tutor.str_phoneNumber,
+                address: tutor.str_address,
+                city: tutor.str_city,
+                province: tutor.str_province,
+                postalCode: tutor.str_postalCode,
+                country: tutor.str_country,
+                rate: tutor.int_rate,
+                timezone: tutor.str_timezone,
+                status: tutor.str_status,
+
+                totalAssignedStudents: totalAssignedStudentsCount,
+                activeAssignedStudents: activeAssignedStudentsCount,
+                pausedAssignedStudents: pausedAssignedStudentsCount,
+                profitOneWeek: profitWeek,
+                profitFourWeeks: profitMonth,
+
+                availableSlotsDisplay: dynamicallyGeneratedSlots,
+                assignedStudentsDetails: assignedStudentDetails.map(s => s.toJSON()), // Convert instances to plain objects
+                payoutHistory: paymentHistory.map(p => ({
+                    id: p.id,
+                    razorpayOrderId: p.str_razorpayOrderId,
+                    razorpayPaymentId: p.str_razorpayPaymentId,
+                    amount: p.int_amount,
+                    transactionFee: p.int_transactionFee,
+                    totalAmount: p.int_totalAmount,
+                    tutorPayout: p.int_tutorPayout,
+                    profitWeek: p.int_profitWeek,
+                    profitMonth: p.int_profitMonth,
+                    paymentMethod: p.str_paymentMethod,
+                    status: p.str_status,
+                    createdAt: p.createdAt,
+                    tutorName: p.student ? `${p.student.str_firstName} ${p.student.str_lastName}` : 'N/A' // Access through 'student' alias
+                })),
+            }
+        };
+
+    } catch (error) {
+        await transaction.rollback();
+        console.error("Error in getonetutorservice:", error);
+        throw new AppError(`Failed to load tutor details: ${error.message}`, 500);
+    }
+};
+
+// GETALLTUTORSWITHPAGINATION
+exports.getonewithpaginationtutorservice = async (queryParams, requestingUserId) => {
+    const transaction = await sequelize.transaction();
+    try {
+        const { page = 1, limit = 10, name = '', rate, status: tutorStatusFilter } = queryParams;
+
+        if (!requestingUserId) throw new AppError("Unauthorized access", 401);
+
+        const currentPage = parseInt(page);
+        const itemsPerPage = parseInt(limit);
+        const filter = {};
+
+        if (name && typeof name === 'string') {
+            filter[Op.or] = [
+                { str_firstName: { [Op.like]: `%${name}%` } },
+                { str_lastName: { [Op.like]: `%${name}%` } },
+                { str_email: { [Op.like]: `%${name}%` } }
+            ];
         }
-        if (!userId) {
-            throw new AppError("Unauthorized access", 401);
+        if (rate !== undefined) filter.int_rate = { [Op.gte]: parseInt(rate) };
+        if (tutorStatusFilter && [status.ACTIVE, status.INACTIVE].includes(tutorStatusFilter)) { // Use 'status'
+            filter.str_status = tutorStatusFilter;
         }
 
-        // Fetch tutor with assigned students and payments
-        const tutor = await db.Tutor.findByPk(tutorId, {
+        const { count, rows: tutors } = await db.Tutor.findAndCountAll({
+            where: filter,
+            limit: itemsPerPage,
+            offset: (currentPage - 1) * itemsPerPage,
+            order: [['createdAt', 'DESC']],
             include: [
                 {
                     model: db.Student,
-                    as: 'arr_assignedStudents', // your alias
-                    attributes: [
-                        'id', 'int_studentNumber', 'str_firstName', 'str_lastName', 'str_familyName',
-                        'str_grade', 'str_year', 'str_email', 'str_phoneNumber', 'str_address',
-                        'str_city', 'str_state', 'str_country', 'dt_startDate', 'dt_dischargeDate',
-                        'bln_accountCreated', 'str_referralSource', 'str_meetingLink',
-                        'objectId_assignedTutor', 'str_timezone', 'int_sessionDuration',
-                        'arr_assessments', 'str_status'
-                    ],
-                    through: { attributes: [] }
+                    as: 'assignedStudents', // Alias defined in models/index.js
+                    attributes: ['id', 'str_status'], // Only need status to count active/paused
+                    required: false // LEFT JOIN
                 }
-            ]
-        });
-        if (!tutor) {
-            throw new AppError("Tutor not found", 404);
-        }
-
-        const currentStudentsCount = tutor.arr_assignedStudents.length;
-
-        // Fetch slots related to this tutor (if needed)
-        const slots = await db.Slot.findAll({
-            where: {
-                obj_tutor: tutorId
-            },
-            raw: true
-        });
-        const PaymentHistory = await db.Payment.findAll({
-            where: {
-                obj_tutorId: tutorId
-            },
-            raw: true
+            ],
+            transaction // Pass transaction
         });
 
-        const responseData = {
-            id: tutor.id,
-            firstName: tutor.str_firstName,
-            lastName: tutor.str_lastName,
-            email: tutor.str_email,
-            phoneNumber: tutor.str_phoneNumber,
-            address: tutor.str_address,
-            city: tutor.str_city,
-            province: tutor.str_province,
-            country: tutor.str_country,
-            timezone: tutor.str_timezone,
-            currentStudents: currentStudentsCount,
-            rate: tutor.int_rate,
-            status: tutor.str_status,
-            slots,
-            assignedStudents: tutor.arr_assignedStudents.map(student => ({
-                id: student.id,
-                studentNumber: student.int_studentNumber,
-                firstName: student.str_firstName,
-                lastName: student.str_lastName,
-                familyName: student.str_familyName,
-                grade: student.str_grade,
-                year: student.str_year,
-                email: student.str_email,
-                phoneNumber: student.str_phoneNumber,
-                address: student.str_address,
-                city: student.str_city,
-                state: student.str_state,
-                country: student.str_country,
-                startDate: student.dt_startDate,
-                dischargeDate: student.dt_dischargeDate,
-                assignedTutor: student.objectId_assignedTutor,
-                timezone: student.str_timezone,
-                assessments: student.arr_assessments,
-                status: student.str_status
-            })),
-            payments: PaymentHistory
-        };
+        // Manually count active/paused students from the included array
+        const formattedTutors = tutors.map(tutor => {
+            const assignedStudents = tutor.assignedStudents || [];
+            const activeStudents = assignedStudents.filter(s => s.str_status === userStatus.ACTIVE).length; // Use userStatus
+            const onPauseStudents = assignedStudents.filter(s => s.str_status === userStatus.PAUSED).length; // Use userStatus
 
-        return { statusCode: 200, data: responseData };
-    } catch (error) {
-        throw new AppError('something went wrong', 500);
-    };
-};
-
-// GET ALL TUTORS WITH PAGINATION SERVICE
-exports.getonewithpaginationtutorservice = async (req) => {
-    const { page = 1, limit = 10, name = '', rate, status: queryStatus } = req.query;
-    const userId = req.user?.id;
-
-    if (!userId) {
-        throw new AppError("Unauthorized access", 401);
-    }
-
-    const currentPage = Math.max(1, parseInt(page, 10) || 1);
-    const itemsPerPage = Math.max(1, parseInt(limit, 10) || 10);
-
-    const filter = {};
-
-    if (name && typeof name === 'string' && name.trim() !== '') {
-        // Use Op.like for MySQL (case-insensitive depending on collation)
-        filter.str_firstName = { [Op.like]: `%${name.trim()}%` };
-    }
-
-    if (rate !== undefined) {
-        const parsedRate = parseFloat(rate);
-        if (!isNaN(parsedRate)) {
-            filter.int_rate = { [Op.gte]: parsedRate };
-        }
-    }
-
-    if (queryStatus) {
-        filter.str_status = queryStatus;
-    }
-
-    const { count: total, rows: tutors } = await db.Tutor.findAndCountAll({
-        where: filter,
-        offset: (currentPage - 1) * itemsPerPage,
-        limit: itemsPerPage,
-        order: [['createdAt', 'DESC']],
-        raw: true
-    });
-
-    return {
-        statusCode: 200,
-        data: tutors,
-        currentPage,
-        totalPages: Math.ceil(total / itemsPerPage),
-        totalRecords: total
-    };
-};
-
-// DELETE TUTOR SERVICE
-exports.deletetutorservice = async (req) => {
-    const tutorId = req.params.id;
-    const userId = req.user?.id;
-
-    if (!userId) {
-        throw new AppError("Unauthorized access", 401);
-    }
-
-    const transaction = await db.sequelize.transaction();
-    try {
-        // Find the tutor
-        const tutor = await db.Tutor.findByPk(tutorId, { transaction });
-        if (!tutor) {
-            throw new AppError("Tutor not found", 404);
-        }
-
-        // Delete associated AvailabilitySlots
-        await db.AvailabilitySlot.destroy({
-            where: { obj_entityId: tutorId, obj_entityType: roles.TUTOR },
-            transaction
+            return {
+                _id: tutor.id,
+                tutorName: `${tutor.str_firstName} ${tutor.str_lastName}`.trim(),
+                email: tutor.str_email,
+                assignedStudentsCount: assignedStudents.length,
+                activeStudents: activeStudents,
+                onPauseStudents: onPauseStudents,
+                status: tutor.str_status,
+                rate: tutor.int_rate,
+            };
         });
-
-        // Clear assigned tutor on students
-        await db.Student.update(
-            { objectId_assignedTutor: null },
-            { where: { objectId_assignedTutor: tutorId }, transaction }
-        );
-
-        // Delete entries in join table TutorStudents
-        await db.sequelize.models.TutorStudents.destroy({
-            where: {
-                obj_tutor: tutorId
-            },
-            transaction
-        });
-
-        // Delete the tutor record
-        await tutor.destroy({ transaction });
-
-        // Delete associated User
-        const user = await db.User.findOne({ where: { profileId: tutorId, profileType: roles.TUTOR }, transaction });
-        if (user) {
-            await user.destroy({ transaction });
-        }
 
         await transaction.commit();
-        return { statusCode: 200, message: "Tutor and associated data deleted successfully" };
+        return {
+            statusCode: 200,
+            data: formattedTutors,
+            currentPage,
+            totalPages: Math.ceil(count / itemsPerPage),
+            totalRecords: count
+        };
 
     } catch (error) {
         await transaction.rollback();
-        throw new AppError(`Failed to delete tutor: ${error.message}`, 500);
+        console.error("Error in getonewithpaginationservice:", error);
+        throw new AppError(`Failed to fetch tutors: ${error.message}`, 500);
     }
 };
 
-exports.adjustTutorAvailability = async (studentId) => {
-    const transaction = await db.sequelize.transaction();
+// DELETETUTOR
+exports.deletetutorservice = async (tutorId, requestingUserId) => {
+    const transaction = await sequelize.transaction();
     try {
-        const student = await db.Student.findByPk(studentId, {
-            attributes: ['str_status', 'objectId_assignedTutor'],
-            transaction
-        });
-        if (!student) {
-            throw new AppError("Student not found", 404);
+        if (!requestingUserId) throw new AppError("Unauthorized access", 401);
+
+        const tutor = await db.Tutor.findByPk(tutorId, { transaction });
+        if (!tutor) throw new AppError("Tutor not found", 404);
+
+        // Delete associated records first to maintain referential integrity
+        await db.RefreshToken.destroy({ where: { userId: tutor.objectId_createdBy }, transaction }); // Delete user's refresh tokens
+        await db.WeeklyHourBlock.destroy({ where: { tutorId: tutor.id }, transaction }); // Delete tutor's weekly hours
+        // Need to update or delete associated Slots and Payments explicitly
+        await db.Slot.destroy({ where: { obj_tutor: tutor.id }, transaction });
+        await db.Payment.destroy({ where: { obj_tutorId: tutor.id }, transaction });
+        await db.RecurringBookingPattern.destroy({ where: { obj_tutor: tutor.id }, transaction });
+
+        // Update students who were assigned to this tutor
+        await db.Student.update(
+            { objectId_assignedTutor: null },
+            { where: { objectId_assignedTutor: tutor.id }, transaction }
+        );
+
+        // Finally, delete the tutor and their associated user
+        await tutor.destroy({ transaction });
+        await db.User.destroy({ where: { id: tutor.objectId_createdBy }, transaction }); // Delete associated user account
+
+        await transaction.commit();
+        return { statusCode: 200, message: "Tutor and associated data deleted successfully." };
+
+    } catch (error) {
+        await transaction.rollback();
+        console.error("Error in deletetutorservice:", error);
+        throw error;
+    }
+};
+
+// REMOVESTUDENT (from high-level assigned list and free slots)
+exports.removeStudentService = async (tutorId, studentId, requestingUserId) => {
+    const transaction = await sequelize.transaction();
+    try {
+        if (!requestingUserId) throw new AppError("Unauthorized access.", 401);
+        if (!mongoose.Types.ObjectId.isValid(tutorId) || !mongoose.Types.ObjectId.isValid(studentId)) {
+            // Mongoose.Types.ObjectId.isValid should be replaced with UUID validation
+            throw new AppError("Invalid Student or Tutor ID format.", 400);
         }
 
-        if (student.str_status === userStatus.INACTIVE && student.objectId_assignedTutor) {
-            const tutor = await db.Tutor.findByPk(student.objectId_assignedTutor, {
-                attributes: ['id', 'str_email', 'str_firstName'],
+        const tutor = await db.Tutor.findByPk(tutorId, { transaction });
+        if (!tutor) throw new AppError("Tutor not found.", 404);
+
+        const student = await db.Student.findByPk(studentId, { transaction });
+        if (!student) throw new AppError("Student not found.", 404);
+
+        const studentUpdated = await db.Student.update(
+            { objectId_assignedTutor: null },
+            { where: { id: student.id, objectId_assignedTutor: tutor.id }, transaction }
+        );
+
+        if (studentUpdated[0] === 0) { // Sequelize update returns array [affectedRows]
+            throw new AppError("Student not assigned to this tutor or not found to remove.", 400);
+        }
+
+        const freedSlotsCount = await db.Slot.update(
+            { obj_student: null, str_status: slotstatus.AVAILABLE },
+            {
+                where: {
+                    obj_student: student.id,
+                    obj_tutor: tutor.id,
+                    str_status: slotstatus.BOOKED,
+                    dt_date: { [Op.gte]: moment().startOf('day').toDate() }
+                },
                 transaction
-            });
+            }
+        );
+        console.log(`Freed ${freedSlotsCount[0]} slots for tutor ${tutor.id}`);
+        await transaction.commit();
+        return { statusCode: 200, message: "Student removed from tutor and associated slots freed successfully." };
+
+    } catch (error) {
+        await transaction.rollback();
+        console.error("Error in removeStudentService:", error);
+        throw error;
+    }
+};
+
+
+// TUTORMASTER (for dropdowns)
+exports.tutormaster = async (queryParams, requestingUserId) => {
+    const transaction = await sequelize.transaction();
+    let committed = false;
+
+    try {
+        const { search } = queryParams;
+
+        if (!requestingUserId) throw new AppError("Unauthorized access", 401);
+
+        const filter = {};
+        if (search) {
+            filter[Op.or] = [
+                { str_firstName: { [Op.like]: `%${search}%` } },
+                { str_lastName: { [Op.like]: `%${search}%` } }
+            ];
+        }
+
+        filter.str_status = userStatus.ACTIVE;
+
+        const tutors = await db.Tutor.findAll({
+            where: filter,
+            attributes: ['id', 'str_firstName', 'str_lastName'],
+            transaction
+        });
+
+        if (!tutors || tutors.length === 0) {
+            await transaction.rollback(); // rollback before commit
+            return {
+                statusCode: 404,
+                message: "No active tutors found matching criteria.",
+                data: []
+            };
+        }
+
+        await transaction.commit();
+        committed = true;
+
+        return {
+            statusCode: 200,
+            message: "Tutors fetched successfully.",
+            data: tutors.map(tutor => ({
+                _id: tutor.id.toString(), // ⬅ Make sure it's `id`, not `_id`
+                tutorName: `${tutor.str_firstName} ${tutor.str_lastName}`,
+            })),
+        };
+
+    } catch (error) {
+        if (!committed) {
+            try {
+                await transaction.rollback();
+            } catch (rollbackError) {
+                console.error("Rollback failed:", rollbackError);
+            }
+        }
+
+        console.error("Error in tutormaster:", error);
+        throw error;
+    }
+};
+
+
+// ADJUSTTUTORAVAILABILITY (called when student status changes)
+exports.adjustTutorAvailability = async (studentId, externalSession = null) => { // externalSession might be passed from student.services
+    const transaction = externalSession || await sequelize.transaction();
+    try {
+        const student = await db.Student.findByPk(studentId, { transaction });
+        if (!student) throw new AppError("Student not found.", 404);
+
+        if ((student.str_status === userStatus.INACTIVE || student.str_status === userStatus.PAUSED) && student.objectId_assignedTutor) {
+            const tutor = await db.Tutor.findByPk(student.objectId_assignedTutor, { attributes: ['id', 'str_email', 'str_firstName'], transaction });
             if (!tutor) {
-                throw new AppError("Tutor not found", 404);
+                console.warn(`Tutor ${student.objectId_assignedTutor} not found for student ${studentId} during availability adjustment.`);
+                // Continue, as the primary goal is to free slots if possible
             }
 
-            // Update slots: mark as available and remove student link
-            const [affectedRows] = await db.Slot.update(
-                { str_status: slotstatus.AVAILABLE, obj_studentId: null },
+            const freedSlotsCount = await db.Slot.update(
+                { obj_student: null, str_status: slotstatus.AVAILABLE },
                 {
                     where: {
-                        obj_studentId: studentId,
-                        str_status: slotstatus.BOOKED
+                        obj_student: student.id,
+                        obj_tutor: student.objectId_assignedTutor,
+                        str_status: slotstatus.BOOKED,
+                        dt_date: { [Op.gte]: moment().startOf('day').toDate() }
                     },
                     transaction
                 }
             );
+            console.log(`Freed ${freedSlotsCount[0]} slots for tutor ${tutor ? tutor.id : 'N/A'} due to student ${student.id} going inactive/paused.`);
 
-            if (affectedRows > 0) {
-                console.log(`Freed ${affectedRows} slots for tutor ${tutor.id}`);
-                await notifyEmail(
-                    tutor.str_email,
-                    'Slot Availability Updated',
-                    `Hello ${tutor.str_firstName},\n\n${affectedRows} slots have been freed due to a student going inactive.`
-                );
-            }
-        }
-
-        await transaction.commit();
-        return { statusCode: 200, message: "Tutor availability adjusted successfully" };
-    } catch (error) {
-        await transaction.rollback();
-        throw new AppError(`Failed to adjust tutor availability: ${error.message}`, 500);
-    }
-};
-
-// CALCULATE TUTOR PAYMENTS
-exports.calculateTutorPayments = async (tutorId) => {
-    const oneWeekAgo = new Date();
-    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-
-    try {
-        // Fetch tutor with assigned students
-        const tutor = await db.Tutor.findByPk(tutorId, {
-            attributes: ['id', 'int_rate'], // Current tutor rate
-            include: [
-                {
-                    model: db.Student,
-                    as: 'arr_assignedStudents', // From your Tutor model association
-                    attributes: ['id'],
-                    through: { attributes: [] }
-                }
-            ]
-        });
-        if (!tutor) {
-            throw new AppError("Tutor not found", 404);
-        }
-
-        const assignedStudentIds = tutor.arr_assignedStudents.map(s => s.id);
-
-        // Fetch completed slots for this tutor and their assigned students within the last week
-        const completedSlots = await db.Slot.findAll({
-            where: {
-                obj_tutor: tutorId,
-                obj_studentId: { [Op.in]: assignedStudentIds },
-                str_status: slotstatus.COMPLETED,
-                str_attendance: attendnace.ATTENDED,
-                updatedAt: { [Op.gte]: oneWeekAgo }
-            },
-            include: [
-                {
-                    model: db.Student,
-                    as: 'student',
-                    attributes: ['str_firstName', 'str_lastName']
-                }
-            ]
-        });
-
-        const studentEarningsMap = new Map();
-        let totalEarnings = 0;
-
-        for (const slot of completedSlots) {
-            const studentId = slot.obj_studentId;
-            const studentName = slot.student ? `${slot.student.str_firstName} ${slot.student.str_lastName}` : 'Unknown Student';
-
-            // Use tutor's current rate per slot (since no rate history)
-            const payoutForSlot = tutor.int_rate;
-
-            if (!studentEarningsMap.has(studentId)) {
-                studentEarningsMap.set(studentId, {
-                    studentId,
-                    studentName,
-                    totalEarnings: 0,
-                    sessionCount: 0
+            // Optionally, notify tutor
+            if (freedSlotsCount[0] > 0 && tutor) {
+                await mailer.sendMail({
+                    to: tutor.str_email,
+                    from: process.env.EMAIL_FROM,
+                    subject: 'Slot Availability Updated: Student Inactive/Paused',
+                    text: `Hello ${tutor.str_firstName},\n\n${freedSlotsCount[0]} slots have been freed due to student ${student.str_firstName} going inactive or paused. These slots are now available for new bookings.`
                 });
             }
-            const stats = studentEarningsMap.get(studentId);
-            stats.totalEarnings += payoutForSlot;
-            stats.sessionCount += 1;
-            totalEarnings += payoutForSlot;
         }
 
-        const studentEarnings = Array.from(studentEarningsMap.values());
-
-        return {
-            statusCode: 200,
-            data: {
-                tutorId: tutor.id,
-                totalEarnings,
-                totalSessions: completedSlots.length,
-                lastUpdated: new Date(),
-                studentEarnings
-            }
-        };
-    } catch (error) {
-        throw new AppError(`Failed to calculate tutor payments: ${error.message}`, 500);
-    }
-};
-
-// ASSIGN STUDENT TO TUTOR
-exports.assignstudentservices = async (tutorId, req) => {
-    const { studentId } = req.body;
-    const userId = req.user?.id;
-
-    if (!userId) {
-        throw new AppError("User is unauthorized!", 401);
-    }
-
-    const transaction = await db.sequelize.transaction();
-    try {
-        const user = await db.User.findByPk(userId, { transaction });
-        if (!user) throw new AppError("User not found!", 404);
-
-        const tutor = await db.Tutor.findByPk(tutorId, { transaction });
-        if (!tutor) throw new AppError("Tutor not found!", 404);
-
-        const student = await db.Student.findByPk(studentId, { transaction });
-        if (!student) throw new AppError("Student not found!", 404);
-
-        // Check if student already assigned by checking student's assignedTutor field
-        if (student.objectId_assignedTutor === tutorId) {
-            throw new AppError("Student is already assigned to this tutor.", 400);
-        }
-
-        // Add student to tutor's assignedStudents via association method
-        await tutor.addArr_assignedStudents(student, { transaction });
-
-        // Update student's assignedTutor
-        await student.update({ objectId_assignedTutor: tutorId }, { transaction });
-
-        await transaction.commit();
-        return { statusCode: 200, message: "Tutor has been assigned student successfully" };
+        if (!externalSession) await transaction.commit();
+        return { statusCode: 200, message: "Tutor availability adjusted successfully." };
 
     } catch (error) {
-        await transaction.rollback();
-        throw new AppError(`Failed to assign student: ${error.message}`, 500);
-    }
-};
-
-
-exports.tutormastersservice = async (req) => {
-    const { search } = req.query;
-    const userId = req.user?.id;
-
-    if (!userId) {
-        throw new AppError("User is unauthorized!", 401);
-    }
-
-    const user = await db.User.findByPk(userId);
-    if (!user) {
-        throw new AppError("User not found!", 404);
-    }
-
-    let filter = {};
-    if (search) {
-        filter.str_firstName = { [Op.like]: `%${search}%` };  // Use Op.like for MySQL
-    }
-
-    const tutors = await db.Tutor.findAll({
-        where: filter,
-        attributes: ['id', 'str_firstName', 'str_lastName'],
-        raw: true
-    });
-
-    if (tutors.length === 0) {
-        throw new AppError("No tutors found matching criteria.", 404);
-    }
-
-    return { message: "Tutors fetched successfully!", statusCode: 200, data: tutors };
-};
-
-// REMOVE STUDENT 
-exports.removeStudentService = async (req, tutorId) => {
-    const { studentId } = req.body;
-    const userId = req.user?.id;
-
-    if (!userId) {
-        throw new AppError("User is unauthorized!", 401);
-    }
-
-    const transaction = await db.sequelize.transaction();
-    try {
-        const user = await db.User.findByPk(userId, { transaction });
-        if (!user) {
-            throw new AppError("User not found!", 404);
-        }
-
-        const tutor = await db.Tutor.findByPk(tutorId, { transaction });
-        if (!tutor) {
-            throw new AppError("Tutor not found!", 404);
-        }
-
-        const student = await db.Student.findByPk(studentId, { transaction });
-        if (!student) {
-            throw new AppError("Student not found!", 404);
-        }
-
-        // Check if the student is assigned to this tutor
-        const isAssigned = await tutor.hasArr_assignedStudents(student, { transaction }); // pass model instance
-        if (!isAssigned) {
-            throw new AppError("Student is not assigned to this tutor.", 400);
-        }
-
-        // Remove association in the join table
-        await tutor.removeArr_assignedStudents(student, { transaction });
-
-        // Clear assignedTutor on the student
-        await student.update({ objectId_assignedTutor: null }, { transaction });
-
-        await transaction.commit();
-        return { message: "Student removed from tutor successfully!", statusCode: 200 };
-
-    } catch (error) {
-        await transaction.rollback();
-        throw new AppError(`Failed to remove student from tutor: ${error.message}`, 500);
+        if (!externalSession) await transaction.rollback();
+        console.error("Error in adjustTutorAvailability:", error);
+        throw error;
+    } finally {
+        if (!externalSession) transaction.end(); // Use .end() for Sequelize transaction
     }
 };

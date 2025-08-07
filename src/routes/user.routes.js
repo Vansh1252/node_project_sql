@@ -17,14 +17,14 @@ router.post(
 );
 router.post('/login', userController.login);
 // Protected
+router.get('/logout-all', userController.logoutAllDevices);
+router.get('/logout', userController.logout);
 router.get('/me', protect, userController.getProfile);
 router.put('/update', protect, validateUpdateUser, validate, userController.updateProfile);
 router.post('/forgot-password', userController.sendPasswordResetLink);
 router.post('/reset-password', userController.setNewPassword);
-router.post('/logout', userController.logout);
 router.put('/update-password', protect, userController.updatePassword);
-router.post('/refresh-token', protect, userController.refreshToken);
 router.get('/dashboard/admin', protect, restrictTo(roles.ADMIN), userController.getAdminDashboard);
-router.delete('/delete/:id', protect, restrictTo('admin'), userController.deleteUser);
+router.get('/refresh-token', userController.refreshToken);
 
 module.exports = router;

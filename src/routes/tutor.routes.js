@@ -14,9 +14,7 @@ router.put('/update/:id', protect, restrictTo(roles.ADMIN), validateTutor, valid
 router.get('/', protect, restrictTo(roles.ADMIN), tutorController.getonewithpagination);
 router.get('/details/:id', protect, restrictTo(roles.ADMIN, roles.TUTOR), tutorController.getone);
 router.delete('/:id', protect, restrictTo(roles.ADMIN), tutorController.deletetutor);
-router.patch('/:tutorId/rate', protect, restrictTo(roles.ADMIN, roles.TUTOR), tutorController.updateTutorRate);
-router.post('/assign-student/:tutorId', protect, restrictTo(roles.ADMIN), tutorController.assignstudent);
-router.post('/master', protect, restrictTo(roles.ADMIN), tutorController.tutormaster);
+router.get('/master', protect, restrictTo(roles.ADMIN), tutorController.tutormaster);
 router.post('/remove-student/:id', protect, restrictTo(roles.ADMIN), tutorController.removestudent);
 
 module.exports = router;

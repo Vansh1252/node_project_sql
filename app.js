@@ -5,12 +5,12 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const morgan = require('morgan');
 require('dotenv').config(); // Load env vars for app logic (e.g., JWT_SECRET)
-
+const cookieParser = require('cookie-parser');
+const cors = require('cors');
 const userrouter = require('./src/routes/user.routes.js');
 const tutorrouter = require('./src/routes/tutor.routes.js');
 const studentrouter = require('./src/routes/student.routes.js');
 const slotrouter = require('./src/routes/slot.routes.js');
-const reportsRouter = require('./src/routes/report.routes.js');
 
 const app = express();
 app.disable('x-powered-by');
@@ -24,6 +24,9 @@ if (process.env.NODE_ENV !== 'test') {
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); 
+app.use(cookieParser());
+app.use(cors({ origin: 'http://localhost:5173', credentials: true }));
 
 app.use(
     helmet.contentSecurityPolicy({
@@ -61,7 +64,6 @@ app.use('/api/auth', userrouter);
 app.use('/api/tutor', tutorrouter);
 app.use('/api/student', studentrouter);
 app.use('/api/slot', slotrouter);
-app.use('/api/reports', reportsRouter);
 
 
 // Error handler middleware
@@ -71,6 +73,7 @@ app.use((err, req, res, next) => {
     if (process.env.NODE_ENV !== 'test') {
         console.error(`Error: ${message}, Status: ${statusCode}, Path: ${req.path}`);
     }
+    console.log(err);
     res.status(statusCode).json({
         success: false,
         statusCode,

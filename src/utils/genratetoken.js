@@ -1,13 +1,15 @@
 const jwt = require('jsonwebtoken');
+const { v4: uuidv4 } = require('uuid');
 
-// token generation 
-const generateToken = (payload) => {
-    try {
-        const token = jwt.sign(payload, process.env.JWT_SECRET);
-        return token;
-    } catch (error) {
-        throw new Error("Token generation failed");
-    }
+const generateToken = (payload, expiresIn) => {
+        const tokenPayload = {
+                ...payload,
+                sessionId: uuidv4(), // ensures each token is unique
+        };
+        return jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn });
 };
 
-module.exports = { generateToken };
+const verifyToken = (token) => {
+        return jwt.verify(token, process.env.JWT_SECRET);
+};
+module.exports = { generateToken, verifyToken };

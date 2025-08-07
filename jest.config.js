@@ -29,6 +29,7 @@ module.exports = {
 
     // Fix open handle warnings
     detectOpenHandles: true,
+      setupFilesAfterEnv: ['<rootDir>/src/test/setup.js'], // Adjust if file is elsewhere
 
     // Run in Node environment (not jsdom)
     testEnvironment: 'node',

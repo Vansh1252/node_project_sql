@@ -1,84 +1,108 @@
-const { db } = require("../utils/db"); // ✅ Assuming db object is exported from db.js
-const userService = require("../services/user.services");
-const jwt = require("jsonwebtoken"); // Keep this for token generation/verification
+const { deleteUser, getAdminDashboard, getProfile, loginUser, logoutAllDevicesService, logoutSingleDeviceService, refreshToken, registerUser, sendPasswordResetLink, setNewPassword, updatePassword, updateUser } = require('../services/user.services');
 const catchAsync = require('../utils/catchAsync');
 
 // REGISTER
-exports.register = catchAsync(async (req, res) => {
-    const result = await userService.registerUser(req.body);
-    res.status(201).json(result);
+exports.register = catchAsync(async (req, res, next) => {
+    const result = await registerUser(req.body);
+    res.status(result.statusCode).json({ message: result.message, userId: result.userId });
 });
 
 // LOGIN
-exports.login = catchAsync(async (req, res) => {
-    const { user, token } = await userService.loginUser(req);
-    res.status(200).json({ token, user });
+exports.login = catchAsync(async (req, res, next) => {
+    const result = await loginUser(req);
+    res
+        .cookie('refreshToken', result.refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'Strict',
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+        })
+        .status(result.statusCode)
+        .json({ message: result.message, accessToken: result.accessToken, user: result.user });
 });
 
 // GET PROFILE
-exports.getProfile = catchAsync(async (req, res) => {
-    const userId = req.user.id; // User ID from decoded token, remains the same UUID
-    // Mongoose: usermodel.findById(userId).select('_id str_email str_fullName str_role');
-    // Sequelize: Find by primary key and select specific attributes
-    const user = await db.User.findByPk(userId, {
-        attributes: ['id', 'str_email', 'str_fullName', 'str_role']
-    });
-    if (!user) return res.status(404).json({ message: 'User not found' });
-
-    res.status(200).json({
-        id: user.id, // ✅ Changed from user._id to user.id
-        email: user.str_email,
-        fullName: user.str_fullName,
-        role: user.str_role
-    });
+exports.getProfile = catchAsync(async (req, res, next) => {
+    const result = await getProfile(req.user.id);
+    res.status(result.statusCode).json(result.user);
 });
 
 // UPDATE PROFILE
-exports.updateProfile = catchAsync(async (req, res) => {
-    const updatedUser = await userService.updateUser(req.user.id, req);
-    res.status(200).json(updatedUser);
+exports.updateProfile = catchAsync(async (req, res, next) => {
+    const result = await updateUser(req.user.id, req.body);
+    res.status(result.statusCode).json({ message: result.message, data: result.data });
 });
 
 // SEND PASSWORD RESET LINK
-exports.sendPasswordResetLink = catchAsync(async (req, res) => {
-    const result = await userService.sendPasswordResetLink(req.body.email);
-    res.status(200).json(result);
-});
-
-// SET NEW PASSWORD
-exports.setNewPassword = catchAsync(async (req, res) => {
-    const { token, newPassword } = req.body;
-    const result = await userService.setNewPassword(token, newPassword);
-    res.status(200).json(result);
-});
-
-// LOGOUT
-exports.logout = (req, res) => {
-    res.status(200).json({ message: 'Token-based logout: just delete token from client.' });
-};
-
-// update password
-exports.updatePassword = catchAsync(async (req, res) => {
-    const { currentPassword, newPassword } = req.body;
-    const result = await userService.updatePassword(req.user.id, currentPassword, newPassword);
+exports.sendPasswordResetLink = catchAsync(async (req, res, next) => {
+    const result = await sendPasswordResetLink(req.body.email);
     res.status(result.statusCode).json({ message: result.message });
 });
 
-// admin dashboard
-exports.getAdminDashboard = catchAsync(async (req, res) => {
-    const result = await userService.getAdminDashboard();
+// SET NEW PASSWORD
+exports.setNewPassword = catchAsync(async (req, res, next) => {
+    const { token, newPassword } = req.body;
+    const result = await setNewPassword(token, newPassword);
+    res.status(result.statusCode).json({ message: result.message });
+});
+
+// LOGOUT (SINGLE DEVICE)
+exports.logout = catchAsync(async (req, res, next) => {
+    const refreshToken = req.cookies?.refreshToken;
+    const result = await logoutSingleDeviceService(refreshToken);
+    res
+        .clearCookie('refreshToken', {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'Strict',
+        })
+        .status(result.statusCode)
+        .json({ message: result.message });
+});
+
+// LOGOUT (ALL DEVICES)
+exports.logoutAllDevices = catchAsync(async (req, res, next) => {
+    const refreshToken = req.cookies?.refreshToken;
+    const result = await logoutAllDevicesService(refreshToken);
+    res
+        .clearCookie('refreshToken', {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'Strict',
+        })
+        .status(result.statusCode)
+        .json({ message: result.message });
+});
+
+// UPDATE PASSWORD
+exports.updatePassword = catchAsync(async (req, res, next) => {
+    const { currentPassword, newPassword } = req.body;
+    const result = await updatePassword(req.user.id, currentPassword, newPassword);
+    res.status(result.statusCode).json({ message: result.message });
+});
+
+// ADMIN DASHBOARD
+exports.getAdminDashboard = catchAsync(async (req, res, next) => {
+    const result = await getAdminDashboard();
     res.status(result.statusCode).json(result.data);
 });
 
-//refreshToken
-exports.refreshToken = catchAsync(async (req, res) => {
-    const result = await userService.refreshToken(req.user.id);
-    res.status(result.statusCode).json({ token: result.token });
+// REFRESH TOKEN
+exports.refreshToken = catchAsync(async (req, res, next) => {
+    const result = await refreshToken(req);
+    res
+        .cookie('refreshToken', result.refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'Strict',
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+        })
+        .status(result.statusCode)
+        .json({ message: result.message, accessToken: result.accessToken, user: result.user });
 });
 
 // DELETE USER
-exports.deleteUser = catchAsync(async (req, res) => {
-    const userId = req.params.id; // Assuming user ID is passed as a URL parameter
-    const result = await userService.deleteUser(userId);
-    res.status(result.statusCode).json(result);
+exports.deleteUser = catchAsync(async (req, res, next) => {
+    const result = await deleteUser(req.user.id);
+    res.status(result.statusCode).json({ message: result.message });
 });

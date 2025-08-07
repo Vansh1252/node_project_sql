@@ -1,80 +1,94 @@
+// models/Payment.js
 const { DataTypes } = require('sequelize');
-const { paymentstatus, tables } = require('../constants/sequelizetableconstants'); // Adjust path as needed
+const { tables, paymentstatus } = require('../constants/sequelizetableconstants');
 
 module.exports = (sequelize) => {
-    const Payment = sequelize.define('Payment', {
+    const Payment = sequelize.define(tables.PAYMENT, {
         id: {
             type: DataTypes.UUID,
             defaultValue: DataTypes.UUIDV4,
             primaryKey: true,
-            allowNull: false
+            allowNull: false,
         },
         str_razorpayOrderId: {
             type: DataTypes.STRING,
             allowNull: false,
-            field: 'str_razorpayOrderId'
         },
         str_razorpayPaymentId: {
             type: DataTypes.STRING,
             allowNull: false,
-            field: 'str_razorpayPaymentId'
         },
         str_razorpaySignature: {
             type: DataTypes.STRING,
             allowNull: false,
-            field: 'str_razorpaySignature'
         },
-        obj_studentId: { // Foreign key
+        obj_studentId: { 
             type: DataTypes.UUID,
+            references: {
+                model: tables.STUDENT,
+                key: 'id',
+            },
             allowNull: false,
-            field: 'obj_studentId'
         },
-        obj_tutorId: { // Foreign key
+        obj_tutorId: { 
             type: DataTypes.UUID,
+            references: {
+                model: tables.TUTOR,
+                key: 'id',
+            },
             allowNull: false,
-            field: 'obj_tutorId'
         },
-        int_amount: {
-            type: DataTypes.FLOAT,
+        obj_slotId: {
+            type: DataTypes.UUID,
+            references: {
+                model: tables.SLOT,
+                key: 'id',
+            },
+            allowNull: true,
+        },
+        int_amount: { 
+            type: DataTypes.INTEGER, 
             allowNull: false,
-            field: 'int_amount'
         },
         int_transactionFee: {
-            type: DataTypes.FLOAT,
+            type: DataTypes.INTEGER,
             allowNull: false,
-            field: 'int_transactionFee'
         },
-        int_totalAmount: {
-            type: DataTypes.FLOAT,
+        int_totalAmount: { 
+            type: DataTypes.INTEGER,
             allowNull: false,
-            field: 'int_totalAmount'
+        },
+        int_tutorPayout: {
+            type: DataTypes.INTEGER,
+            allowNull: false,
+        },
+        int_profitWeek: {
+            type: DataTypes.INTEGER,
+            allowNull: false,
+        },
+        int_profitMonth: {
+            type: DataTypes.INTEGER,
+            allowNull: false,
         },
         str_paymentMethod: {
-            type: DataTypes.STRING,
+            type: DataTypes.ENUM('Razorpay', 'Stripe', 'PayPal'), 
             allowNull: false,
-            field: 'str_paymentMethod'
-        },
-        obj_slotId: { // Foreign key
-            type: DataTypes.UUID,
-            allowNull: false,
-            field: 'obj_slotId'
         },
         str_status: {
             type: DataTypes.ENUM(paymentstatus.PENDING, paymentstatus.COMPLETED, paymentstatus.FAILED),
             defaultValue: paymentstatus.PENDING,
-            field: 'str_status'
-        }
+            allowNull: false,
+        },
     }, {
-        tableName: tables.PAYMENT,
         timestamps: true,
-        underscored: true
+        tableName: tables.PAYMENT,
+        underscored: true, 
+
     });
-
-    Payment.associate = (models) => {
-        Payment.belongsTo(models.Student, { foreignKey: 'obj_studentId', as: 'student' });
-        Payment.belongsTo(models.Tutor, { foreignKey: 'obj_tutorId', as: 'tutor' });
-        Payment.belongsTo(models.Slot, { foreignKey: 'obj_slotId', as: 'slot' });
+    Payment.associate = (db) => {
+        Payment.belongsTo(db.Student, { foreignKey: 'obj_studentId', as: 'student' });
+        Payment.belongsTo(db.Tutor, { foreignKey: 'obj_tutorId', as: 'tutor' });
+        Payment.belongsTo(db.Slot, { foreignKey: 'obj_slotId', as: 'slot' });
     };
-
     return Payment;
 };

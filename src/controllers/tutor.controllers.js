@@ -1,68 +1,54 @@
-const {
-    createtutorservice,
-    updatetutorservice,
-    getonetutorservice,
-    getonewithpaginationtutorservice,
-    deletetutorservice,
-    adjustTutorAvailability, // This service function needs to handle the new AvailabilitySlot model
-    tutormastersservice,
-    updateRateHistory,
-    assignstudentservices,
-    removeStudentService
-} = require('../services/tutor.services');
-const catchAsync = require('../utils/catchAsync');
+const tutorServices = require('../services/tutor.services');
+const catchAsync = require('../utils/catchAsync'); // Ensure catchAsync is imported
+const AppError = require('../utils/AppError'); // Ensure AppError is imported
 
 // Create Tutor
-exports.createtutor = catchAsync(async (req, res) => {
-    const result = await createtutorservice(req);
-    return res.status(result.statusCode).json(result);
+exports.createtutor = catchAsync(async (req, res, next) => { 
+    const result = await tutorServices.createtutorservice(req.body, req.user.id);
+    return res.status(result.statusCode).json({ message: result.message, tutorId: result.tutorId });
 });
 
 // Update Tutor
-exports.updatetutor = catchAsync(async (req, res) => {
-    const result = await updatetutorservice(req);
-    return res.status(result.statusCode).json(result);
+exports.updatetutor = catchAsync(async (req, res, next) => { 
+    const tutorId = req.params.tutorId; 
+    const result = await tutorServices.updatetutorservice(tutorId, req.body, req.user.id);
+    return res.status(result.statusCode).json({ message: result.message, data: result.data });
 });
 
 // Get One Tutor
-exports.getone = catchAsync(async (req, res) => {
-    const result = await getonetutorservice(req);
-    return res.status(result.statusCode).json(result);
+exports.getone = catchAsync(async (req, res, next) => { 
+    const tutorId = req.params.tutorId; 
+    const result = await tutorServices.getonetutorservice(tutorId, req.user.id);
+    return res.status(result.statusCode).json({ data: result.data });
 });
 
 // Get All Tutors with Pagination
-exports.getonewithpagination = catchAsync(async (req, res) => {
-    const result = await getonewithpaginationtutorservice(req);
-    return res.status(result.statusCode).json(result);
+exports.getonewithpagination = catchAsync(async (req, res, next) => { 
+    const result = await tutorServices.getonewithpaginationtutorservice(req.query, req.user.id);
+    return res.status(result.statusCode).json({
+        data: result.data,
+        currentPage: result.currentPage,
+        totalPages: result.totalPages,
+        totalRecords: result.totalRecords
+    });
 });
 
 // Delete Tutor
-exports.deletetutor = catchAsync(async (req, res) => {
-    const result = await deletetutorservice(req);
-    return res.status(result.statusCode).json(result);
-});
-
-exports.updateTutorRate = catchAsync(async (req, res) => {
-    const tutorId = req.params.tutorId;
-    const result = await updateRateHistory(tutorId, req);
-    return res.status(result.statusCode).json({ result });
-});
-
-// assign tutor student
-exports.assignstudent = catchAsync(async (req, res) => {
-    const tutorId = req.params.tutorId;
-    const result = await assignstudentservices(tutorId, req);
+exports.deletetutor = catchAsync(async (req, res, next) => { 
+    const tutorId = req.params.tutorId; 
+    const result = await tutorServices.deletetutorservice(tutorId, req.user.id);
     return res.status(result.statusCode).json({ message: result.message });
 });
 
-exports.tutormaster = async (req, res) => {
-    const result = await tutormastersservice(req);
+// remove student
+exports.removestudent = catchAsync(async (req, res, next) => { 
+    const tutorId = req.params.tutorId; 
+    const { studentId } = req.body; 
+    const result = await tutorServices.removeStudentService(tutorId, studentId, req.user.id);
+    return res.status(result.statusCode).json({ message: result.message });
+});
+// get tutor name api
+exports.tutormaster = catchAsync(async (req, res, next) => { 
+    const result = await tutorServices.tutormaster(req.query, req.user.id);
     return res.status(result.statusCode).json({ message: result.message, data: result.data });
-}
-
-// remove student from tutor
-exports.removestudent = async (req, res) => {
-    const tutorId = req.params.id; // Assuming id is the tutor's ID here
-    const result = await removeStudentService(req, tutorId);
-    return res.status(result.statusCode).json({ message: result.message });
-}
+});

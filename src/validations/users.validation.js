@@ -14,9 +14,6 @@ exports.registeruser = [
 ];
 
 exports.validateUpdateUser = [
-    param('userId') 
-        .exists().withMessage('User ID is required in parameters.'),
-
     body('fullName')
         .optional()
         .isString().withMessage('Full name must be a string.')
@@ -24,15 +21,8 @@ exports.validateUpdateUser = [
         .notEmpty().withMessage('Full name cannot be empty if provided.'),
 
     body('email')
-        .optional()
         .isEmail().withMessage('Invalid email format.')
         .normalizeEmail(), // Standardize email format
-
-    body('phoneNumber')
-        .optional()
-        .isString().withMessage('Phone number must be a string.')
-        .trim()
-        .notEmpty().withMessage('Phone number cannot be empty if provided.'),
 
     body('status')
         .optional()

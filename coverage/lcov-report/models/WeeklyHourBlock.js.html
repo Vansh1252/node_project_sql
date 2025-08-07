@@ -3,7 +3,7 @@
 <html lang="en">
 
 <head>
-    <title>Code coverage report for models/user.models.js</title>
+    <title>Code coverage report for models/WeeklyHourBlock.js</title>
     <meta charset="utf-8" />
     <link rel="stylesheet" href="../prettify.css" />
     <link rel="stylesheet" href="../base.css" />
@@ -19,7 +19,7 @@
 <body>
 <div class='wrapper'>
     <div class='pad1'>
-        <h1><a href="../index.html">All files</a> / <a href="index.html">models</a> user.models.js</h1>
+        <h1><a href="../index.html">All files</a> / <a href="index.html">models</a> WeeklyHourBlock.js</h1>
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
@@ -120,16 +120,7 @@
 <a name='L55'></a><a href='#L55'>55</a>
 <a name='L56'></a><a href='#L56'>56</a>
 <a name='L57'></a><a href='#L57'>57</a>
-<a name='L58'></a><a href='#L58'>58</a>
-<a name='L59'></a><a href='#L59'>59</a>
-<a name='L60'></a><a href='#L60'>60</a>
-<a name='L61'></a><a href='#L61'>61</a>
-<a name='L62'></a><a href='#L62'>62</a>
-<a name='L63'></a><a href='#L63'>63</a>
-<a name='L64'></a><a href='#L64'>64</a>
-<a name='L65'></a><a href='#L65'>65</a>
-<a name='L66'></a><a href='#L66'>66</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
+<a name='L58'></a><a href='#L58'>58</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">1x</span>
@@ -180,85 +171,70 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">2x</span>
-<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// models/User.js
-const { DataTypes } = require('sequelize');
-const { tables, roles, userStatus } = require('../constants/sequelizetableconstants');
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">const { DataTypes } = require('sequelize');
+const { tables } = require('../constants/sequelizetableconstants');
 &nbsp;
 module.exports = (sequelize) =&gt; {
-    const User = sequelize.define(tables.USERS, {
-        id: {
-            type: DataTypes.UUID,
-            defaultValue: DataTypes.UUIDV4,
-            primaryKey: true,
-            allowNull: false,
-        },
-        str_fullName: {
-            type: DataTypes.STRING,
-            allowNull: false,
-        },
-        str_email: {
-            type: DataTypes.STRING,
-            allowNull: false,
-            unique: true,
-            validate: {
-                isEmail: true,
-            },
-        },
-        str_password: {
-            type: DataTypes.STRING,
-            allowNull: false,
-        },
-        str_role: {
-            type: DataTypes.ENUM(roles.ADMIN, roles.STUDENT, roles.TUTOR),
-            defaultValue: roles.ADMIN,
-            allowNull: false,
-        },
-        obj_profileId: { // Renamed from ObjectId_profileId for Sequelize
-            type: DataTypes.UUID, // Will store the UUID of the associated Student or Tutor
-            allowNull: true, // Can be null initially or if profile not yet created
-        },
-        str_profileType: { // Stores the type of profile (e.g., 'Student', 'Tutor')
-            type: DataTypes.ENUM(tables.STUDENT, tables.TUTOR),
-            allowNull: true,
-        },
-        str_status: {
-            type: DataTypes.ENUM(userStatus.ACTIVE, userStatus.INACTIVE),
-            defaultValue: userStatus.ACTIVE,
-            allowNull: false,
-        },
-        resetToken: { // For password reset
-            type: DataTypes.STRING,
-            allowNull: true,
-        },
-        resetTokenExpiration: {
-            type: DataTypes.DATE,
-            allowNull: true,
-        },
-    }, {
-        timestamps: true, // Adds createdAt and updatedAt fields
-        tableName: tables.USERS, // Ensure table name matches constant
-        underscored: true, // ✅ recommended
+  const WeeklyHourBlock = sequelize.define(tables.WEEKLY_HOUR_BLOCK, {
+    id: {
+      type: DataTypes.UUID,
+      defaultValue: DataTypes.UUIDV4,
+      primaryKey: true,
+      allowNull: false,
+    },
+    str_day: {
+      type: DataTypes.ENUM('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'),
+      allowNull: false,
+    },
+    str_start: {
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    str_end: {
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    int_start_minutes: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
+    int_end_minutes: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
+    tutor_id: {
+      type: DataTypes.UUID,
+      references: {
+        model: tables.TUTOR,
+        key: 'id',
+      },
+      allowNull: false,
+    }
+  }, {
+    timestamps: true,
+    tableName: tables.WEEKLY_HOUR_BLOCK,
+    underscored: true, 
+    indexes: [
+      {
+        unique: true,
+        fields: ['tutor_id', 'str_day', 'str_start', 'str_end']
+      }
+    ]
+  });
 &nbsp;
-    });
-    User.associate = (db) =&gt; {
-        User.hasMany(db.RefreshToken, { foreignKey: 'userId', as: 'refreshTokens' });
-    };
+  WeeklyHourBlock.associate = (db) =&gt; {
+    WeeklyHourBlock.belongsTo(db.Tutor, { foreignKey: 'tutor_id', as: 'tutor' });
+  };
 &nbsp;
-    return User;
-};</pre></td></tr></table></pre>
+  return WeeklyHourBlock;
+};
+&nbsp;</pre></td></tr></table></pre>
 
                 <div class='push'></div><!-- for sticky footer -->
             </div><!-- /wrapper -->
