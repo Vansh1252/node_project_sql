@@ -265,8 +265,6 @@ exports.getonetutorservice = async (tutorId, requestingUserId) => {
         const totalAssignedStudentsCount = assignedStudentDetails.length;
 
         const now = moment();
-        const oneWeekAgo = now.clone().subtract(7, 'days').toDate();
-        const oneMonthAgo = now.clone().subtract(30, 'days').toDate();
         const paymentHistory = await db.Payment.findAll({
             where: { obj_tutorId: tutor.id },
             include: [{ model: db.Student, as: 'student', attributes: ['str_firstName', 'str_lastName'] }],

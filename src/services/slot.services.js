@@ -3,7 +3,7 @@ const { sequelize, db } = require('../utils/db');
 const moment = require('moment'); // For date manipulation
 const AppError = require('../utils/AppError');
 const { tables, status, slotstatus, attendnace, userStatus } = require('../constants/sequelizetableconstants'); // Ensure correct constants
-
+const razorpay = require('../utils/razerpaysetup')
 // --- Helper Functions (Adjusted for Sequelize context) ---
 
 const _convertToMinutes = (timeString) => {
@@ -246,7 +246,7 @@ exports.getGeneratedAvailableSlotsService = async (tutorId, studentId, durationM
                         conflictDetails: [],
                     };
 
-                    let overallTemplateStatus = slotstatus.AVAILABLE;
+                    let overallTemplateStatus;
                     let hasPastConflictForAllRecurrences = false;
                     let hasActualBookingConflictForAllRecurrences = false;
                     const allConflictInstancesForThisPattern = [];
@@ -565,98 +565,142 @@ exports.assignTutorAndBookSlotsService = async (studentId, tutorId, selectedRecu
     }
 };
 
+// Helper function to validate inputs
+const validateInputsrazopay = (userId, tutorId, studentId, selectedRecurringPatterns) => {
+    if (!userId) throw new AppError('Unauthorized access.', 401);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tutorId)) {
+        throw new AppError('Invalid Tutor ID format.', 400);
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(studentId)) {
+        throw new AppError('Invalid Student ID format.', 400);
+    }
+    if (!Array.isArray(selectedRecurringPatterns) || selectedRecurringPatterns.length === 0) {
+        throw new AppError('No recurring slot patterns provided for order creation.', 400);
+    }
+    for (const pattern of selectedRecurringPatterns) {
+        const { dayOfWeek, startTime, endTime, durationMinutes } = pattern;
+        if (!dayOfWeek || !startTime || !endTime || !durationMinutes) {
+            throw new AppError('Each recurring pattern must have dayOfWeek, startTime, endTime, and durationMinutes.', 400);
+        }
+        const duration = parseInt(durationMinutes);
+        if (isNaN(duration) || duration <= 0) {
+            throw new AppError(`Invalid durationMinutes for pattern ${dayOfWeek} ${startTime}.`, 400);
+        }
+    }
+};
 
-exports.createRazorpayOrderService = async (tutorId, studentProfileData, selectedRecurringPatterns, requestingUserId) => {
+// Helper function to fetch and validate tutor
+const getValidTutor = async (tutorId) => {
+    const tutor = await db.Tutor.findByPk(tutorId, {
+        attributes: ['id', 'int_rate', 'str_firstName', 'str_lastName', 'str_email', 'str_status'],
+    });
+    if (!tutor) throw new AppError('Tutor not found.', 404);
+    if (tutor.str_status !== userStatus.ACTIVE) {
+        throw new AppError(`Tutor ${tutor.str_firstName} is not active.`, 400);
+    }
+    console.log(tutor)
+    return tutor;
+};
+
+// Helper function to fetch and validate student
+const getValidStudent = async (studentId) => {
+    const student = await db.Student.findByPk(studentId, {
+        attributes: ['id', 'int_studentNumber', 'str_firstName', 'str_lastName', 'str_email'],
+    });
+    if (!student) throw new AppError('Student not found.', 404);
+    return student;
+};
+
+// Helper function to calculate recurring cost
+const calculateRecurringCost = (selectedRecurringPatterns, tutor, student) => {
+    const defaultOrderStartDate = moment().startOf('day');
+    const defaultOrderEndDate = moment().add(1, 'year').endOf('day');
+    let totalBaseCost = 0;
+    let totalSessionCount = 0;
+
+    for (const pattern of selectedRecurringPatterns) {
+        const { dayOfWeek, durationMinutes } = pattern;
+        const duration = parseInt(durationMinutes);
+        const costPerMinute = tutor.int_rate / 60; // Assuming int_rate is per hour
+        const baseCostPerInstance = costPerMinute * duration;
+
+        let recurrencesCount = 0;
+        let currentDayInstance = moment(defaultOrderStartDate).day(dayOfWeek);
+        if (currentDayInstance.isBefore(defaultOrderStartDate, 'day')) {
+            currentDayInstance.add(1, 'week');
+        }
+
+        while (currentDayInstance.isSameOrBefore(defaultOrderEndDate, 'day')) {
+            if (currentDayInstance.isSameOrAfter(moment().startOf('day'), 'day')) {
+                recurrencesCount++;
+            }
+            currentDayInstance.add(1, 'week');
+        }
+
+        totalBaseCost += baseCostPerInstance * recurrencesCount;
+        totalSessionCount += recurrencesCount;
+    }
+
+    return { totalBaseCost, totalSessionCount };
+};
+
+// Helper function to add platform commission
+const addPlatformCommission = (totalBaseCost) => {
+    const PLATFORM_COMMISSION_PERCENTAGE = 0.10; // 10%
+    return totalBaseCost * (1 + PLATFORM_COMMISSION_PERCENTAGE);
+};
+
+// Helper function to prepare Razorpay order options
+const prepareRazorpayOrderOptions = (tutor, student, totalBaseCost, selectedRecurringPatterns, amountToCharge, totalSessionCount) => {
+    return {
+        amount: Math.round(amountToCharge * 100), // Amount in paisa/cents
+        currency: 'INR',
+        receipt: `receipt_stud_${student.str_studentNumber}_${Date.now()}`,
+        notes: {
+            tutorId: tutor.id.toString(),
+            studentNumber: student.int_studentNumber,
+            studentName: `${student.str_firstName} ${student.str_lastName}`,
+            studentEmail: student.str_email,
+            totalBaseCost: totalBaseCost.toFixed(2),
+            platformCommission: (amountToCharge - totalBaseCost).toFixed(2),
+            sessionCount: totalSessionCount,
+            patterns: JSON.stringify(selectedRecurringPatterns.map((p) => ({ day: p.dayOfWeek, start: p.startTime }))),
+        },
+        payment_capture: 1, // Auto capture payment
+    };
+};
+
+// Main service function
+exports.createRazorpayOrderService = async (tutorId, studentId, selectedRecurringPatterns, userId) => {
+    validateInputsrazopay(userId, tutorId, studentId, selectedRecurringPatterns);
+
+    const tutor = await getValidTutor(tutorId);
+    const student = await getValidStudent(studentId);
+
+    const { totalBaseCost, totalSessionCount } = calculateRecurringCost(selectedRecurringPatterns, tutor, student);
+
+    if (totalSessionCount === 0 || totalBaseCost === 0) {
+        throw new AppError('No future recurring sessions found for the selected patterns. Cannot create a payment order.', 400);
+    }
+
+    const amountToCharge = addPlatformCommission(totalBaseCost);
+    const orderOptions = prepareRazorpayOrderOptions(tutor, student, totalBaseCost, selectedRecurringPatterns, amountToCharge, totalSessionCount);
+
     try {
-        // --- 1. Basic Validations ---
-        if (!requestingUserId) throw new AppError("Unauthorized access.", 401);
-        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tutorId)) throw new AppError("Invalid Tutor ID format.", 400);
-        if (!studentProfileData?.studentNumber || !studentProfileData?.firstName || !studentProfileData?.email) {
-            throw new AppError("Missing essential student profile data for order creation.", 400);
-        }
-        if (!Array.isArray(selectedRecurringPatterns) || selectedRecurringPatterns.length === 0) {
-            throw new AppError("No recurring slot patterns provided for order creation.", 400);
-        }
-
-        // --- 2. Fetch Tutor & Student Context ---
-        const tutor = await db.Tutor.findByPk(tutorId, { attributes: ['id', 'int_rate', 'str_firstName', 'str_lastName', 'str_email', 'str_status'] });
-        if (!tutor) throw new AppError("Tutor not found.", 404);
-        if (tutor.str_status !== status.ACTIVE) throw new AppError(`Tutor ${tutor.str_firstName} is not active.`, 400);
-
-        // Calculate a reasonable booking window for costing (e.g., 1 year from now)
-        // This is separate from student's actual start/discharge dates, used only for order calculation.
-        const defaultOrderStartDate = moment().startOf('day');
-        const defaultOrderEndDate = moment().add(1, 'year').endOf('day');
-
-        let totalBaseCost = 0; // Cost before platform commission
-        let totalSessionCount = 0;
-
-        // --- 3. Calculate Total Amount to Charge ---
-        for (const pattern of selectedRecurringPatterns) {
-            const { dayOfWeek, startTime, endTime, durationMinutes } = pattern;
-            if (!dayOfWeek || !startTime || !endTime || !durationMinutes) throw new AppError("Each recurring pattern must have dayOfWeek, startTime, endTime, and durationMinutes.", 400);
-            const duration = parseInt(durationMinutes);
-            if (isNaN(duration) || duration <= 0) throw new AppError(`Invalid durationMinutes for pattern ${dayOfWeek} ${startTime}.`, 400);
-
-            const costPerMinute = tutor.int_rate / 60; // Assuming int_rate is per hour
-            const baseCostPerInstance = costPerMinute * duration;
-
-            let recurrencesCount = 0;
-            let currentDayInstance = moment(defaultOrderStartDate).day(dayOfWeek);
-            if (currentDayInstance.isBefore(defaultOrderStartDate, 'day')) {
-                currentDayInstance.add(1, 'week');
-            }
-
-            while (currentDayInstance.isSameOrBefore(defaultOrderEndDate, 'day')) {
-                if (currentDayInstance.isSameOrAfter(moment().startOf('day'), 'day')) { // Only count future slots
-                    recurrencesCount++;
-                }
-                currentDayInstance.add(1, 'week');
-            }
-            totalBaseCost += baseCostPerInstance * recurrencesCount;
-            totalSessionCount += recurrencesCount;
-        }
-
-        if (totalSessionCount === 0 || totalBaseCost === 0) {
-            throw new AppError("No future recurring sessions found for the selected patterns. Cannot create a payment order.", 400);
-        }
-
-        const PLATFORM_COMMISSION_PERCENTAGE = 0.10; // 10%
-        const amountToChargeCustomer = totalBaseCost * (1 + PLATFORM_COMMISSION_PERCENTAGE);
-
-        // --- 4. Create Razorpay Order ---
-        const orderOptions = {
-            amount: Math.round(amountToChargeCustomer * 100), // Amount in paisa/cents
-            currency: 'INR', // Default currency
-            receipt: `receipt_stud_${studentProfileData.studentNumber}_${Date.now()}`, // Unique receipt
-            notes: {
-                tutorId: tutor.id.toString(),
-                studentNumber: studentProfileData.studentNumber.toString(), // Use studentNumber as ID
-                studentName: `${studentProfileData.firstName} ${studentProfileData.lastName}`,
-                studentEmail: studentProfileData.email,
-                totalBaseCost: totalBaseCost.toFixed(2),
-                platformCommission: (amountToChargeCustomer - totalBaseCost).toFixed(2),
-                sessionCount: totalSessionCount,
-                patterns: JSON.stringify(selectedRecurringPatterns.map(p => ({ day: p.dayOfWeek, start: p.startTime })))
-            },
-            payment_capture: 1 // Auto capture payment
-        };
-
         const razorpayOrder = await razorpay.orders.create(orderOptions);
-
         return {
             statusCode: 200,
-            message: "Razorpay order created successfully.",
+            message: 'Razorpay order created successfully.',
             data: {
                 orderId: razorpayOrder.id,
-                amount: razorpayOrder.amount / 100, // Return amount in actual currency unit
+                amount: razorpayOrder.amount / 100,
                 currency: razorpayOrder.currency,
                 receipt: razorpayOrder.receipt,
-                notes: razorpayOrder.notes
-            }
+                notes: razorpayOrder.notes,
+            },
         };
-    } catch (error) {
-        console.error("Error in createRazorpayOrderService:", error);
-        throw new AppError(`Failed to create Razorpay order: ${error.message}`, 500);
+    } catch (razorpayError) {
+        console.error('Error creating Razorpay order:', razorpayError);
+        throw new AppError(`Failed to create Razorpay order: ${razorpayError.message}`, 500);
     }
 };

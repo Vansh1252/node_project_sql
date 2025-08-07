@@ -82,14 +82,14 @@ exports.getStudentConcreteSlots = catchAsync(async (req, res, next) => {
     });
 });
 exports.createRazorpayOrder = catchAsync(async (req, res, next) => {
-    const { tutorId, studentProfileData, selectedRecurringPatterns } = req.body;
+    const { tutorId, studentId, selectedRecurringPatterns } = req.body;
     const requestingUserId = req.user.id; // From auth middleware
 
-    if (!tutorId || !studentProfileData || !selectedRecurringPatterns || selectedRecurringPatterns.length === 0) {
+    if (!tutorId || !studentId || !selectedRecurringPatterns || selectedRecurringPatterns.length === 0) {
         throw new AppError("tutorId, studentProfileData, and selectedRecurringPatterns are required to create a payment order.", 400);
     }
 
-    const result = await createRazorpayOrderService(tutorId, studentProfileData, selectedRecurringPatterns, requestingUserId);
+    const result = await createRazorpayOrderService(tutorId, studentId, selectedRecurringPatterns, requestingUserId);
 
     res.status(result.statusCode).json({
         message: result.message,

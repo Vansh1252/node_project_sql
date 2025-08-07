@@ -137,7 +137,7 @@ const applyUpdatesToStudent = (studentInstance, updateFields) => {
     if (country !== undefined) fieldsToUpdate.str_country = country;
     if (startDate !== undefined) fieldsToUpdate.dt_startDate = moment(startDate).startOf('day').toDate();
     if (dischargeDate !== undefined) fieldsToUpdate.dt_dischargeDate = dischargeDate ? moment(dischargeDate).endOf('day').toDate() : null;
-    if (assignedTutor !== undefined) fieldsToUpdate.objectId_assignedTutor = assignedTutor ? assignedTutor : null; // Handle null assignment
+    if (assignedTutor !== undefined) fieldsToUpdate.objectId_assignedTutor = assignedTutor; // Handle null assignment
     if (timezone !== undefined) fieldsToUpdate.str_timezone = timezone;
     if (sessionDuration !== undefined) fieldsToUpdate.int_sessionDuration = sessionDuration;
     if (availabileTime !== undefined) fieldsToUpdate.arr_availabileTime = availabileTime; // Assuming this is directly assignable
@@ -547,13 +547,10 @@ exports.statuschangeservice = async (studentId, newStatus, requestingUserId) => 
 
 // ASSIGN TUTOR AND BOOK SLOTS
 exports.assignTutorAndBookSlotsService = async (studentId, tutorId, selectedRecurringPatterns, initialPaymentForBooking, requestingUserId, externalSession = null) => {
-    const session = externalSession || await sequelize.transaction();
-    if (!externalSession) session.start();
-
+    const transaction = externalSession || await sequelize.transaction();
+    const session = transaction || externalSession;
     try {
         if (!requestingUserId) throw new AppError("Unauthorized access.", 401);
-        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(studentId)) throw new AppError("Invalid Student ID format.", 400);
-        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tutorId)) throw new AppError("Invalid Tutor ID format.", 400);
         if (!Array.isArray(selectedRecurringPatterns) || selectedRecurringPatterns.length === 0) {
             throw new AppError("No recurring slot patterns provided for booking.", 400);
         }
@@ -581,8 +578,6 @@ exports.assignTutorAndBookSlotsService = async (studentId, tutorId, selectedRecu
         const oldAssignedTutorId = student.objectId_assignedTutor;
         if (oldAssignedTutorId && oldAssignedTutorId !== tutorId) { // Direct comparison for UUID strings
             const oldTutor = await db.Tutor.findByPk(oldAssignedTutorId, { transaction: session });
-            if (oldTutor) {
-            }
         }
         // Assign student to new tutor (use Sequelize association methods)
         // Check if student is already associated with this tutor to prevent redundant association adds
