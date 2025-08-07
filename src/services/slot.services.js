@@ -270,7 +270,7 @@ const processSlotRecurrences = (pSlot, dayName, startMoment, endMoment, bookedSl
 
     return {
         status: hasPastConflictForAllRecurrences ? slotstatus.COMPLETED :
-                hasActualBookingConflictForAllRecurrences ? slotstatus.BOOKED :
+            hasActualBookingConflictForAllRecurrences ? slotstatus.BOOKED :
                 slotstatus.AVAILABLE,
         conflictDetails: allConflictInstancesForThisPattern
     };
@@ -303,12 +303,19 @@ const processDayAvailability = (tutor, dayName, duration, startMoment, endMoment
         return template;
     });
 };
-
+const validateInputsforslots = (requestingUserId, durationMinutes) => {
+    if (!requestingUserId) throw new AppError("Unauthorized access.", 401);
+    const duration = parseInt(durationMinutes);
+    if (isNaN(duration) || duration <= 0) {
+        throw new AppError("Invalid durationMinutes. Must be a positive number.", 400);
+    }
+    return duration;
+}
 // Main service function
 exports.getGeneratedAvailableSlotsService = async (tutorId, studentId, durationMinutes, requestingUserId) => {
     const transaction = await sequelize.transaction();
     try {
-        const duration = validateInputs(requestingUserId, durationMinutes);
+        const duration = validateInputsforslots(requestingUserId, durationMinutes);
         const tutor = await validateTutor(tutorId, transaction);
         const student = await validateStudent(studentId, transaction);
 

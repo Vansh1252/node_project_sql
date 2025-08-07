@@ -105,41 +105,59 @@ const createStudentUserAndSendEmail = async (firstName, lastName, email, student
 
 // Helper: For applying updates to student document (used in updateStudentService)
 // Ensure this helper updates fields of the Sequelize instance directly (studentInstance.set(fields))
-const applyUpdatesToStudent = (studentInstance, updateFields) => {
-    const {
-        studentNumber, firstName, lastName, familyName, grade, year, email,
-        phoneNumber, address, city, state, country, startDate, dischargeDate,
-        assignedTutor, timezone, sessionDuration, availabileTime, str_status,
-        referralSource, meetingLink, accountCreated
-    } = updateFields;
-
-    const fieldsToUpdate = {};
-    if (studentNumber !== undefined) fieldsToUpdate.int_studentNumber = studentNumber;
-    if (firstName !== undefined) fieldsToUpdate.str_firstName = firstName;
-    if (lastName !== undefined) fieldsToUpdate.str_lastName = lastName;
-    if (familyName !== undefined) fieldsToUpdate.str_familyName = familyName;
-    if (grade !== undefined) fieldsToUpdate.str_grade = grade;
-    if (year !== undefined) fieldsToUpdate.str_year = year;
-    if (email !== undefined) fieldsToUpdate.str_email = email;
-    if (phoneNumber !== undefined) fieldsToUpdate.str_phoneNumber = phoneNumber;
-    if (address !== undefined) fieldsToUpdate.str_address = address;
-    if (city !== undefined) fieldsToUpdate.str_city = city;
-    if (state !== undefined) fieldsToUpdate.str_state = state;
-    if (country !== undefined) fieldsToUpdate.str_country = country;
-    if (startDate !== undefined) fieldsToUpdate.dt_startDate = moment(startDate).startOf('day').toDate();
-    if (dischargeDate !== undefined) fieldsToUpdate.dt_dischargeDate = dischargeDate ? moment(dischargeDate).endOf('day').toDate() : null;
-    if (assignedTutor !== undefined) fieldsToUpdate.objectId_assignedTutor = assignedTutor; // Handle null assignment
-    if (timezone !== undefined) fieldsToUpdate.str_timezone = timezone;
-    if (sessionDuration !== undefined) fieldsToUpdate.int_sessionDuration = sessionDuration;
-    if (availabileTime !== undefined) fieldsToUpdate.arr_availabileTime = availabileTime; // Assuming this is directly assignable
-    if (referralSource !== undefined) fieldsToUpdate.str_referralSource = referralSource;
-    if (meetingLink !== undefined) fieldsToUpdate.str_meetingLink = meetingLink;
-    if (accountCreated !== undefined) fieldsToUpdate.bln_accountCreated = accountCreated;
-    if (str_status && [userStatus.ACTIVE, userStatus.INACTIVE, userStatus.PAUSED].includes(str_status)) {
-        fieldsToUpdate.str_status = str_status;
+const fieldMapping = {
+    studentNumber: { key: 'int_studentNumber' },
+    firstName: { key: 'str_firstName' },
+    lastName: { key: 'str_lastName' },
+    familyName: { key: 'str_familyName' },
+    grade: { key: 'str_grade' },
+    year: { key: 'str_year' },
+    email: { key: 'str_email' },
+    phoneNumber: { key: 'str_phoneNumber' },
+    address: { key: 'str_address' },
+    city: { key: 'str_city' },
+    state: { key: 'str_state' },
+    country: { key: 'str_country' },
+    startDate: { key: 'dt_startDate', transform: value => moment(value).startOf('day').toDate() },
+    dischargeDate: { key: 'dt_dischargeDate', transform: value => value ? moment(value).endOf('day').toDate() : null },
+    assignedTutor: { key: 'objectId_assignedTutor' },
+    timezone: { key: 'str_timezone' },
+    sessionDuration: { key: 'int_sessionDuration' },
+    availabileTime: { key: 'arr_availabileTime' },
+    referralSource: { key: 'str_referralSource' },
+    meetingLink: { key: 'str_meetingLink' },
+    accountCreated: { key: 'bln_accountCreated' },
+    str_status: {
+        key: 'str_status',
+        validate: value => [userStatus.ACTIVE, userStatus.INACTIVE, userStatus.PAUSED].includes(value)
     }
+};
+
+// Helper function to transform field value based on mapping
+const transformFieldValue = (field, value) => {
+    if (field.transform) return field.transform(value);
+    return value;
+};
+
+// Helper function to validate field value
+const isValidFieldValue = (field, value) => {
+    if (field.validate) return field.validate(value);
+    return true;
+};
+
+// Main function to apply updates to student instance
+const applyUpdatesToStudent = (studentInstance, updateFields) => {
+    const fieldsToUpdate = {};
+
+    Object.entries(fieldMapping).forEach(([inputKey, { key, validate }]) => {
+        if (updateFields[inputKey] !== undefined && (!validate || isValidFieldValue({ validate }, updateFields[inputKey]))) {
+            fieldsToUpdate[key] = transformFieldValue({ validate, transform: fieldMapping[inputKey].transform }, updateFields[inputKey]);
+        }
+    });
+
     studentInstance.set(fieldsToUpdate); // Update the Sequelize instance in memory
 };
+
 
 
 // Main Service Functions (Converted to Sequelize)
@@ -210,10 +228,10 @@ exports.updatestudentservice = async (studentId, updateData, requestingUserId) =
         const oldAssignedTutorId = student.objectId_assignedTutor;
 
         const {
-            studentNumber, firstName, lastName, familyName, grade, year, email,
-            phoneNumber, address, city, state, country, startDate, dischargeDate,
-            assignedTutor, timezone, sessionDuration, availabileTime, str_status,
-            referralSource, meetingLink, accountCreated
+            studentNumber, email,
+            phoneNumber, startDate, dischargeDate,
+            assignedTutor,
+
         } = updateData;
 
         await validateUniqueFields({ studentNumber, email, phoneNumber }, studentId, transaction);
