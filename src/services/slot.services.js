@@ -219,103 +219,101 @@ exports.getGeneratedAvailableSlotsService = async (tutorId, studentId, durationM
         });
 
         const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-
         for (const dayName of daysOfWeek) {
-            const tutorDayAvailability = tutor.weeklyHours.find( // Access via alias
+            const tutorDayAvailability = tutor.weeklyHours.find(
                 (day) => day.str_day.toLowerCase() === dayName.toLowerCase()
             );
+            if (tutorDayAvailability) {
+                if (tutorDayAvailability.int_start_minutes === undefined || tutorDayAvailability.int_end_minutes === undefined) {
+                    console.warn(`Tutor ${tutorId} weekly hours block missing int_startMinutes/endMinutes for ${dayName}. Skipping.`);
+                    continue;
+                }
+                const block = {
+                    int_startMinutes: tutorDayAvailability.int_start_minutes,
+                    int_endMinutes: tutorDayAvailability.int_end_minutes,
+                };
+                const dummyDate = moment('2000-01-01').day(dayName);
+                const potentialSlotsInBlock = _generatePotentialSlots(block, dummyDate.toDate(), duration);
 
-            if (tutorDayAvailability && tutorDayAvailability.arr_slots && tutorDayAvailability.arr_slots.length > 0) {
-                for (const block of tutorDayAvailability.arr_slots) {
-                    if (block.int_startMinutes === undefined || block.int_endMinutes === undefined) {
-                        console.warn(`Tutor ${tutorId} weekly hours block missing int_startMinutes/endMinutes for ${dayName}. Skipping.`);
-                        continue;
+                for (const pSlot of potentialSlotsInBlock) {
+                    const recurringSlotTemplate = {
+                        dayOfWeek: dayName,
+                        startTime: pSlot.startTime,
+                        endTime: pSlot.endTime,
+                        status: slotstatus.AVAILABLE,
+                        tutorId: tutor.id,
+                        tutorName: `${tutor.str_firstName} ${tutor.str_lastName}`,
+                        conflictDetails: [],
+                    };
+
+                    let overallTemplateStatus = slotstatus.AVAILABLE;
+                    let hasPastConflictForAllRecurrences = false;
+                    let hasActualBookingConflictForAllRecurrences = false;
+                    const allConflictInstancesForThisPattern = [];
+
+                    let currentCheckDay = moment(startMoment);
+                    currentCheckDay = currentCheckDay.day(dayName);
+                    if (currentCheckDay.isBefore(startMoment, 'day')) {
+                        currentCheckDay.add(1, 'week');
                     }
-                    const dummyDate = moment('2000-01-01').day(dayName);
-                    const potentialSlotsInBlock = _generatePotentialSlots(block, dummyDate.toDate(), duration);
 
-                    for (const pSlot of potentialSlotsInBlock) {
-                        const recurringSlotTemplate = {
-                            dayOfWeek: dayName,
-                            startTime: pSlot.startTime,
-                            endTime: pSlot.endTime,
-                            status: slotstatus.AVAILABLE,
-                            tutorId: tutor.id, // Use .id for Sequelize PK
-                            tutorName: `${tutor.str_firstName} ${tutor.str_lastName}`,
-                            conflictDetails: []
-                        };
+                    while (currentCheckDay.isSameOrBefore(endMoment, 'day')) {
+                        const checkDateNormalized = currentCheckDay.startOf('day').toDate();
+                        const checkDateFormatted = currentCheckDay.format('YYYY-MM-DD');
+                        const dateKey = checkDateNormalized.getTime();
+                        const bookedSlotsOnThisDate = bookedSlotsByDateMap.get(dateKey) || [];
 
-                        let overallTemplateStatus = slotstatus.AVAILABLE;
-                        let hasPastConflictForAllRecurrences = false;
-                        let hasActualBookingConflictForAllRecurrences = false;
-                        const allConflictInstancesForThisPattern = [];
-
-                        let currentCheckDay = moment(startMoment);
-                        currentCheckDay = currentCheckDay.day(dayName);
-                        if (currentCheckDay.isBefore(startMoment, 'day')) {
-                            currentCheckDay.add(1, 'week');
+                        let instanceIsPast = false;
+                        if (currentCheckDay.isSame(today, 'day') && pSlot.endMinutes <= _convertToMinutes(moment().format('HH:mm'))) {
+                            instanceIsPast = true;
+                            allConflictInstancesForThisPattern.push({ date: checkDateFormatted, status: slotstatus.COMPLETED, reason: 'In the past today' });
+                        } else if (currentCheckDay.isBefore(today, 'day')) {
+                            instanceIsPast = true;
+                            allConflictInstancesForThisPattern.push({ date: checkDateFormatted, status: slotstatus.COMPLETED, reason: 'In the past' });
                         }
 
-                        while (currentCheckDay.isSameOrBefore(endMoment, 'day')) {
-                            const checkDateNormalized = currentCheckDay.startOf('day').toDate();
-                            const checkDateFormatted = currentCheckDay.format('YYYY-MM-DD');
-                            const dateKey = checkDateNormalized.getTime();
+                        let isOverlappingWithBookedSlot = false;
+                        let overlappingBookedSlotInfo = null;
 
-                            const bookedSlotsOnThisDate = bookedSlotsByDateMap.get(dateKey) || [];
-
-                            let instanceIsPast = false;
-                            if (currentCheckDay.isSame(today, 'day') && pSlot.endMinutes <= _convertToMinutes(moment().format('HH:mm'))) {
-                                instanceIsPast = true;
-                                allConflictInstancesForThisPattern.push({ date: checkDateFormatted, status: slotstatus.COMPLETED, reason: "In the past today" });
-                            } else if (currentCheckDay.isBefore(today, 'day')) {
-                                instanceIsPast = true;
-                                allConflictInstancesForThisPattern.push({ date: checkDateFormatted, status: slotstatus.COMPLETED, reason: "In the past" });
-                            }
-
-                            let isOverlappingWithBookedSlot = false;
-                            let overlappingBookedSlotInfo = null;
-
-                            if (!instanceIsPast) {
-                                for (const bSlot of bookedSlotsOnThisDate) {
-                                    if (pSlot.startMinutes < bSlot.int_endMinutes && pSlot.endMinutes > bSlot.int_startMinutes) {
-                                        isOverlappingWithBookedSlot = true;
-                                        overlappingBookedSlotInfo = bSlot;
-                                        break;
-                                    }
+                        if (!instanceIsPast) {
+                            for (const bSlot of bookedSlotsOnThisDate) {
+                                if (pSlot.startMinutes < bSlot.int_endMinutes && pSlot.endMinutes > bSlot.int_startMinutes) {
+                                    isOverlappingWithBookedSlot = true;
+                                    overlappingBookedSlotInfo = bSlot;
+                                    break;
                                 }
                             }
-
-                            if (isOverlappingWithBookedSlot) {
-                                hasActualBookingConflictForAllRecurrences = true;
-                                allConflictInstancesForThisPattern.push({
-                                    date: checkDateFormatted,
-                                    status: overlappingBookedSlotInfo.str_status,
-                                    slotId: overlappingBookedSlotInfo.id, // Use .id for Sequelize PK
-                                    bookedByTutorId: overlappingBookedSlotInfo.obj_tutor, // This is already a UUID
-                                    bookedByStudentId: overlappingBookedSlotInfo.obj_student, // This is already a UUID
-                                });
-                            }
-
-                            if (instanceIsPast) {
-                                hasPastConflictForAllRecurrences = true;
-                            }
-
-                            currentCheckDay.add(1, 'week');
                         }
 
-                        if (hasPastConflictForAllRecurrences) {
-                            overallTemplateStatus = slotstatus.COMPLETED;
-                        } else if (hasActualBookingConflictForAllRecurrences) {
-                            overallTemplateStatus = slotstatus.BOOKED;
-                        } else {
-                            overallTemplateStatus = slotstatus.AVAILABLE;
+                        if (isOverlappingWithBookedSlot) {
+                            hasActualBookingConflictForAllRecurrences = true;
+                            allConflictInstancesForThisPattern.push({
+                                date: checkDateFormatted,
+                                status: overlappingBookedSlotInfo.str_status,
+                                slotId: overlappingBookedSlotInfo.id,
+                                bookedByTutorId: overlappingBookedSlotInfo.obj_tutor,
+                                bookedByStudentId: overlappingBookedSlotInfo.obj_student,
+                            });
                         }
 
-                        recurringSlotTemplate.status = overallTemplateStatus;
-                        recurringSlotTemplate.conflictDetails = allConflictInstancesForThisPattern;
+                        if (instanceIsPast) {
+                            hasPastConflictForAllRecurrences = true;
+                        }
 
-                        generatedRecurringSlotsWithStatus.push(recurringSlotTemplate);
+                        currentCheckDay.add(1, 'week');
                     }
+
+                    if (hasPastConflictForAllRecurrences) {
+                        overallTemplateStatus = slotstatus.COMPLETED;
+                    } else if (hasActualBookingConflictForAllRecurrences) {
+                        overallTemplateStatus = slotstatus.BOOKED;
+                    } else {
+                        overallTemplateStatus = slotstatus.AVAILABLE;
+                    }
+
+                    recurringSlotTemplate.status = overallTemplateStatus;
+                    recurringSlotTemplate.conflictDetails = allConflictInstancesForThisPattern;
+                    generatedRecurringSlotsWithStatus.push(recurringSlotTemplate);
                 }
             }
         }
@@ -431,21 +429,8 @@ exports.statuschangeservice = async (studentId, newStatus, requestingUserId) => 
         const student = await db.Student.findByPk(studentId, { transaction });
         if (!student) throw new AppError("Student not found", 404);
 
-        const oldStatus = student.str_status;
         await student.update({ str_status: newStatus }, { transaction });
 
-        // Add to audit log (if StudentAuditLog model is defined)
-        // If StudentAuditLog model exists:
-        // await db.StudentAuditLog.create({
-        //     action: 'Status Changed',
-        //     details: `Status changed from ${oldStatus} to ${newStatus}`,
-        //     studentId: student.id,
-        //     changedBy: requestingUserId
-        // }, { transaction });
-
-
-        // Call adjustTutorAvailability if student goes inactive or paused
-        // Assuming adjustTutorAvailability in tutor.services is updated to Sequelize
         if (newStatus === userStatus.INACTIVE || newStatus === userStatus.PAUSED) {
             await tutorServices.adjustTutorAvailability(student.id, transaction); // Pass student.id and transaction
         }
@@ -522,7 +507,7 @@ exports.assignTutorAndBookSlotsService = async (studentId, tutorId, selectedRecu
             if (isNaN(duration) || duration <= 0) throw new AppError(`Invalid durationMinutes for pattern ${dayOfWeek} ${startTime}.`, 400);
 
             const tutorDayAvailability = tutorWeeklyHours.find(d => d.str_day.toLowerCase() === dayOfWeek.toLowerCase());
-            if (!tutorDayAvailability || !tutorDayAvailability.arr_slots.some(block => { // arr_slots is still Mongoose-style
+            if (!tutorDayAvailability?.arr_slots.some(block => { // arr_slots is still Mongoose-style
                 const patternStartMinutes = _convertToMinutes(startTime);
                 const patternEndMinutes = _convertToMinutes(endTime);
                 return patternStartMinutes >= block.int_startMinutes && patternEndMinutes <= block.int_endMinutes;
@@ -558,7 +543,7 @@ exports.assignTutorAndBookSlotsService = async (studentId, tutorId, selectedRecu
                 }];
 
                 const createdSlotResult = await slotService.createSlotService(createSlotPayload, requestingUserId, session);
-                if (createdSlotResult.data && createdSlotResult.data.createdSlotIds && createdSlotResult.data.createdSlotIds.length > 0) {
+                if (createdSlotResult?.data.createdSlotIds && createdSlotResult?.data.createdSlotIds.length > 0) {
                     bookedSlotIds.push(createdSlotResult.data.createdSlotIds[0]);
                 }
                 currentDayInstance.add(1, 'week');
@@ -582,14 +567,11 @@ exports.assignTutorAndBookSlotsService = async (studentId, tutorId, selectedRecu
 
 
 exports.createRazorpayOrderService = async (tutorId, studentProfileData, selectedRecurringPatterns, requestingUserId) => {
-    // No transaction here, as this is just creating the order with Razorpay, not committing to our DB.
-    // The main DB transaction happens in assignTutorAndBookSlotsService after payment success.
-
     try {
         // --- 1. Basic Validations ---
         if (!requestingUserId) throw new AppError("Unauthorized access.", 401);
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tutorId)) throw new AppError("Invalid Tutor ID format.", 400);
-        if (!studentProfileData || !studentProfileData.studentNumber || !studentProfileData.firstName || !studentProfileData.email) {
+        if (!studentProfileData?.studentNumber || !studentProfileData?.firstName || !studentProfileData?.email) {
             throw new AppError("Missing essential student profile data for order creation.", 400);
         }
         if (!Array.isArray(selectedRecurringPatterns) || selectedRecurringPatterns.length === 0) {

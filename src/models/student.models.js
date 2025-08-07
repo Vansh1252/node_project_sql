@@ -117,18 +117,16 @@ module.exports = (sequelize) => {
     }, {
         timestamps: true,
         tableName: tables.STUDENT,
-            underscored: true, // ✅ recommended
+        underscored: true, // ✅ recommended
 
     });
 
-      Student.associate = (db) => {
+    Student.associate = (db) => {
         Student.belongsTo(db.User, { foreignKey: 'objectId_createdBy', as: 'createdBy' });
         Student.belongsTo(db.Tutor, { foreignKey: 'objectId_assignedTutor', as: 'assignedTutor' });
-        Student.hasMany(db.Slot, { foreignKey: 'obj_student', as: 'slots' }); // obj_student in Slot model
-        Student.hasMany(db.Payment, { foreignKey: 'obj_studentId', as: 'payments' }); // obj_studentId in Payment model
-        Student.hasMany(db.RecurringBookingPattern, { foreignKey: 'obj_student', as: 'recurringPatterns' }); // obj_student in RecurringBookingPattern
-        // Student.hasMany(db.Assessment, { foreignKey: 'studentId', as: 'assessments' }); // If you re-add Assessment
-        // Student.hasMany(db.StudentAuditLog, { foreignKey: 'studentId', as: 'auditLogs' }); // If you re-add StudentAuditLog
+        Student.hasMany(db.Slot, { foreignKey: 'obj_student', as: 'slots' });
+        Student.hasMany(db.Payment, { foreignKey: 'obj_studentId', as: 'payments' });
+        Student.hasMany(db.RecurringBookingPattern, { foreignKey: 'obj_student', as: 'recurringPatterns' });
     };
 
     return Student;

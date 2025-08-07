@@ -197,8 +197,6 @@ exports.updateUser = async (userId, updateData) => {
 
         const { fullName, email, status: newStatus } = updateData;
 
-        if (fullName !== undefined && typeof fullName !== 'string') throw new AppError('Full name is required.', 422);
-
         if (email && email !== user.str_email) {
             const existingEmailUser = await db.User.findOne(
                 {
@@ -235,12 +233,6 @@ exports.updateUser = async (userId, updateData) => {
 exports.sendPasswordResetLink = async (email) => {
     const transaction = await sequelize.transaction();
     try {
-        if (!process.env.EMAIL_FROM || !process.env.FRONTEND_URL) {
-            throw new AppError('Email or frontend URL configuration missing.', 500);
-        }
-
-        if (!email || typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new AppError('Invalid email format.', 422);
-
         const user = await db.User.findOne({ where: { str_email: email }, transaction });
         if (!user) throw new AppError('User not found.', 404);
 
@@ -432,7 +424,7 @@ exports.    refreshToken = async (req) => {
         if (!refreshTokenValue) throw new AppError('No refresh token provided.', 401);
 
         const decoded = verifyToken(refreshTokenValue);
-        if (!decoded || !decoded.id) throw new AppError('Invalid refresh token.', 401);
+        if (!decoded?.id) throw new AppError('Invalid refresh token.', 401);
 
         const user = await db.User.findByPk(decoded.id, { transaction });
         if (!user) throw new AppError('User not found.', 404);

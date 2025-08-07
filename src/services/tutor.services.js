@@ -7,6 +7,7 @@ const { sequelize, db } = require('../utils/db'); // Import sequelize instance a
 const mailer = require('../utils/mailer');
 const AppError = require('../utils/AppError');
 const { roles, userStatus, slotstatus, paymentstatus, tables } = require('../constants/sequelizetableconstants'); // Ensure correct constants
+const { userInfo } = require('os');
 
 const _validateAndFindTutor = async (tutorId, requestingUserId, transaction = null) => {
     if (!requestingUserId) {
@@ -266,25 +267,6 @@ exports.getonetutorservice = async (tutorId, requestingUserId) => {
         const now = moment();
         const oneWeekAgo = now.clone().subtract(7, 'days').toDate();
         const oneMonthAgo = now.clone().subtract(30, 'days').toDate();
-
-        const weeklyProfit = await db.Payment.sum('int_totalAmount', {
-            where: {
-                obj_tutorId: tutor.id,
-                str_status: paymentstatus.COMPLETED,
-                createdAt: { [Op.gte]: oneWeekAgo }
-            },
-            transaction // Pass transaction
-        }) || 0;
-
-        const monthlyProfit = await db.Payment.sum('int_totalAmount', {
-            where: {
-                obj_tutorId: tutor.id,
-                str_status: paymentstatus.COMPLETED,
-                createdAt: { [Op.gte]: oneMonthAgo }
-            },
-            transaction // Pass transaction
-        }) || 0;
-
         const paymentHistory = await db.Payment.findAll({
             where: { obj_tutorId: tutor.id },
             include: [{ model: db.Student, as: 'student', attributes: ['str_firstName', 'str_lastName'] }],
@@ -296,14 +278,6 @@ exports.getonetutorservice = async (tutorId, requestingUserId) => {
         const defaultDisplayDurationMinutes = 30;
         const plannedStartDate = moment().format('YYYY-MM-DD');
         const plannedEndDate = moment().add(3, 'months').format('YYYY-MM-DD'); // Default 3 months
-
-        const generatedSlotsResult = await db.sequelize.query(
-            `SELECT * FROM your_slot_generation_view_or_function_for_tutor_display('${tutorId}', '${defaultDisplayDurationMinutes}', '${plannedStartDate}', '${plannedEndDate}')`
-            , {
-                type: sequelize.QueryTypes.SELECT,
-                transaction // Pass transaction here if the view/function interacts with data being locked
-            }
-        );
         // Assuming slotService.getGeneratedAvailableSlotsForTutorDisplayService handles its own session.
         const dynamicallyGeneratedSlots = (await slotService.getGeneratedAvailableSlotsForTutorDisplayService(
             tutor.id, // Tutor ID
@@ -383,7 +357,7 @@ exports.getonewithpaginationtutorservice = async (queryParams, requestingUserId)
             ];
         }
         if (rate !== undefined) filter.int_rate = { [Op.gte]: parseInt(rate) };
-        if (tutorStatusFilter && [status.ACTIVE, status.INACTIVE].includes(tutorStatusFilter)) { // Use 'status'
+        if (tutorStatusFilter && [userInfo.ACTIVE, userStatus.INACTIVE].includes(tutorStatusFilter)) { // Use 'status'
             filter.str_status = tutorStatusFilter;
         }
 
@@ -526,8 +500,6 @@ exports.removeStudentService = async (tutorId, studentId, requestingUserId) => {
 // TUTORMASTER (for dropdowns)
 exports.tutormaster = async (queryParams, requestingUserId) => {
     const transaction = await sequelize.transaction();
-    let committed = false;
-
     try {
         const { search } = queryParams;
 
@@ -559,8 +531,6 @@ exports.tutormaster = async (queryParams, requestingUserId) => {
         }
 
         await transaction.commit();
-        committed = true;
-
         return {
             statusCode: 200,
             message: "Tutors fetched successfully.",
@@ -571,14 +541,7 @@ exports.tutormaster = async (queryParams, requestingUserId) => {
         };
 
     } catch (error) {
-        if (!committed) {
-            try {
-                await transaction.rollback();
-            } catch (rollbackError) {
-                console.error("Rollback failed:", rollbackError);
-            }
-        }
-
+        await transaction.rollback();
         console.error("Error in tutormaster:", error);
         throw error;
     }

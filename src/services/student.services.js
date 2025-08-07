@@ -246,7 +246,7 @@ exports.updatestudentservice = async (studentId, updateData, requestingUserId) =
         if (country !== undefined) fieldsToUpdate.str_country = country;
         if (startDate !== undefined) fieldsToUpdate.dt_startDate = moment(startDate).startOf('day').toDate();
         if (dischargeDate !== undefined) fieldsToUpdate.dt_dischargeDate = dischargeDate ? moment(dischargeDate).endOf('day').toDate() : null;
-        if (assignedTutor !== undefined) fieldsToUpdate.objectId_assignedTutor = assignedTutor ? assignedTutor : null;
+        if (assignedTutor !== undefined) fieldsToUpdate.objectId_assignedTutor = assignedTutor;
         if (timezone !== undefined) fieldsToUpdate.str_timezone = timezone;
         if (sessionDuration !== undefined) fieldsToUpdate.int_sessionDuration = sessionDuration;
         if (availabileTime !== undefined) fieldsToUpdate.arr_availabileTime = availabileTime; // Assuming direct assign
@@ -527,7 +527,6 @@ exports.statuschangeservice = async (studentId, newStatus, requestingUserId) => 
         const student = await db.Student.findByPk(studentId, { transaction });
         if (!student) throw new AppError("Student not found", 404);
 
-        const oldStatus = student.str_status;
         await student.update({ str_status: newStatus }, { transaction });
 
         // Call adjustTutorAvailability if student goes inactive or paused
@@ -583,10 +582,6 @@ exports.assignTutorAndBookSlotsService = async (studentId, tutorId, selectedRecu
         if (oldAssignedTutorId && oldAssignedTutorId !== tutorId) { // Direct comparison for UUID strings
             const oldTutor = await db.Tutor.findByPk(oldAssignedTutorId, { transaction: session });
             if (oldTutor) {
-                // Assuming you have a Student.belongsTo(Tutor) and Tutor.hasMany(Student) setup
-                // Remove student from old tutor's assignedStudents (if using association methods)
-                // If not, update student.objectId_assignedTutor to null first then re-assign
-                // But student.update({ objectId_assignedTutor: tutorId }) is done below anyway
             }
         }
         // Assign student to new tutor (use Sequelize association methods)
@@ -623,7 +618,7 @@ exports.assignTutorAndBookSlotsService = async (studentId, tutorId, selectedRecu
             if (isNaN(duration) || duration <= 0) throw new AppError(`Invalid durationMinutes for pattern ${dayOfWeek} ${startTime}.`, 400);
 
             const tutorDayAvailability = tutorWeeklyHours.find(d => d.str_day.toLowerCase() === dayOfWeek.toLowerCase());
-            if (!tutorDayAvailability || !tutorDayAvailability.arr_slots.some(block => {
+            if (!tutorDayAvailability?.arr_slots.some(block => {
                 const patternStartMinutes = _convertToMinutes(startTime);
                 const patternEndMinutes = _convertToMinutes(endTime);
                 return patternStartMinutes >= block.int_startMinutes && patternEndMinutes <= block.int_endMinutes;
@@ -659,7 +654,7 @@ exports.assignTutorAndBookSlotsService = async (studentId, tutorId, selectedRecu
                 }];
 
                 const createdSlotResult = await slotService.createSlotService(createSlotPayload, requestingUserId, session);
-                if (createdSlotResult.data && createdSlotResult.data.createdSlotIds && createdSlotResult.data.createdSlotIds.length > 0) {
+                if (createdSlotResult?.data.createdSlotIds && createdSlotResult?.data.createdSlotIds.length > 0) {
                     bookedSlotIds.push(createdSlotResult.data.createdSlotIds[0]);
                 }
                 currentDayInstance.add(1, 'week');
