@@ -38,7 +38,7 @@ const timeUtils = {
     }
 };
 
-// Validation Utility
+
 const validateUUID = (id, fieldName = 'ID') => {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
         throw new AppError(`Invalid ${fieldName} format (expected UUID).`, 400);
@@ -129,8 +129,8 @@ const checkSlotConflict = async (tutorId, studentId, slotDate, startMinutes, end
             { obj_tutor: tutorId },
             ...(studentId ? [{ obj_student: studentId }] : [])
         ],
-        int_startMinutes: { [Op.lt]: endMinutes },
-        int_endMinutes: { [Op.gt]: startMinutes }
+        int_start_minutes: { [Op.lt]: endMinutes },
+        int_end_minutes: { [Op.gt]: startMinutes }
     };
     if (excludeSlotId) where.id = { [Op.ne]: excludeSlotId };
     const conflictingSlot = await db.Slot.findOne({ where, transaction });
@@ -170,8 +170,8 @@ const createSlot = async (slotData, requestingUserId, transaction) => {
         dt_date: slotDate,
         str_startTime: startTime,
         str_endTime: endTime,
-        int_startMinutes: startMinutes,
-        int_endMinutes: endMinutes,
+        int_start_minutes: startMinutes,
+        int_end_minutes: endMinutes,
         str_status: status,
         objectId_createdBy: requestingUserId
     }, { transaction });
@@ -207,12 +207,14 @@ const fetchBookedSlots = async (tutorId, studentId, startMoment, endMoment, tran
         attributes: ['id', 'dt_date', 'str_startTime', 'str_endTime', 'int_start_minutes', 'int_end_minutes', 'str_status', 'obj_tutor', 'obj_student'],
         transaction
     });
+
     const bookedSlotsByDateMap = new Map();
     slots.forEach(slot => {
         const dateKey = moment(slot.dt_date).startOf('day').toDate().getTime();
         if (!bookedSlotsByDateMap.has(dateKey)) bookedSlotsByDateMap.set(dateKey, []);
-        bookedSlotsByDateMap.get(dateKey).push(slot);
+        bookedSlotsByDateMap.get(dateKey).push(slot.dataValues); // Use dataValues to extract plain object
     });
+
     return bookedSlotsByDateMap;
 };
 
@@ -227,7 +229,7 @@ const createSlotTemplate = (dayName, pSlot, tutor) => ({
 });
 
 const checkSlotInstance = (pSlot, currentCheckDay, bookedSlotsByDateMap, today) => {
-    const checkDateNormalized = currentCheckDay.startOf('day').toDate();
+    const checkDateNormalized = currentCheckDay.clone().startOf('day').toDate();
     const checkDateFormatted = currentCheckDay.format('YYYY-MM-DD');
     const dateKey = checkDateNormalized.getTime();
     const bookedSlotsOnThisDate = bookedSlotsByDateMap.get(dateKey) || [];
@@ -235,7 +237,8 @@ const checkSlotInstance = (pSlot, currentCheckDay, bookedSlotsByDateMap, today) 
     let instanceIsPast = false;
     let conflict = null;
 
-    if (currentCheckDay.isSame(today, 'day') && pSlot.endMinutes <= timeUtils.convertToMinutes(moment().format('HH:mm'))) {
+    const nowMinutes = timeUtils.convertToMinutes(moment().format('HH:mm'));
+    if (currentCheckDay.isSame(today, 'day') && pSlot.startMinutes <= nowMinutes) {
         instanceIsPast = true;
         conflict = { date: checkDateFormatted, status: slotstatus.COMPLETED, reason: 'In the past today' };
     } else if (currentCheckDay.isBefore(today, 'day')) {
@@ -243,7 +246,10 @@ const checkSlotInstance = (pSlot, currentCheckDay, bookedSlotsByDateMap, today) 
         conflict = { date: checkDateFormatted, status: slotstatus.COMPLETED, reason: 'In the past' };
     } else {
         for (const bSlot of bookedSlotsOnThisDate) {
-            if (pSlot.startMinutes < bSlot.int_endMinutes && pSlot.endMinutes > bSlot.int_startMinutes) {
+            if (
+                pSlot.startMinutes < bSlot.int_end_minutes &&
+                pSlot.endMinutes > bSlot.int_start_minutes
+            ) {
                 conflict = {
                     date: checkDateFormatted,
                     status: bSlot.str_status,
@@ -279,15 +285,21 @@ const processSlotRecurrences = (pSlot, dayName, startMoment, endMoment, bookedSl
     }
 
     let status;
-    if (hasPastConflictForAllRecurrences) status = slotstatus.COMPLETED;
-    else if (hasActualBookingConflictForAllRecurrences) status = slotstatus.BOOKED;
-    else status = slotstatus.AVAILABLE;
+    if (allConflictInstancesForThisPattern.some(c => c.status === slotstatus.BOOKED || c.status === slotstatus.COMPLETED)) {
+        status = slotstatus.BOOKED;
+    } else if (hasPastConflictForAllRecurrences) {
+        status = slotstatus.COMPLETED;
+    } else {
+        status = slotstatus.AVAILABLE;
+    }
 
     return { status, conflictDetails: allConflictInstancesForThisPattern };
 };
 
 const processDayAvailability = (tutor, dayName, duration, startMoment, endMoment, bookedSlotsByDateMap, today) => {
-    const tutorDayAvailability = tutor.weeklyHours.find(day => day.str_day.toLowerCase() === dayName.toLowerCase());
+    const tutorDayAvailability = tutor.weeklyHours.find(
+        day => day.str_day.toLowerCase() === dayName.toLowerCase()
+    );
     if (!tutorDayAvailability) return [];
 
     if (tutorDayAvailability.int_start_minutes === undefined || tutorDayAvailability.int_end_minutes === undefined) {
@@ -299,18 +311,25 @@ const processDayAvailability = (tutor, dayName, duration, startMoment, endMoment
         int_start_minutes: tutorDayAvailability.int_start_minutes,
         int_end_minutes: tutorDayAvailability.int_end_minutes
     };
-    const dummyDate = moment('2000-01-01').day(dayName);
-    const potentialSlots = generatePotentialSlots(block, dummyDate.toDate(), duration);
+
+    // Calculate the first date for this weekday after student start date
+    let firstAvailableDateForThisDay = moment(startMoment).day(dayName);
+    if (firstAvailableDateForThisDay.isBefore(startMoment, 'day')) {
+        firstAvailableDateForThisDay.add(1, 'week');
+    }
+
+    const potentialSlots = generatePotentialSlots(block, firstAvailableDateForThisDay.toDate(), duration);
 
     return potentialSlots.map(pSlot => {
         const template = createSlotTemplate(dayName, pSlot, tutor);
-        const { status, conflictDetails } = processSlotRecurrences(pSlot, dayName, startMoment, endMoment, bookedSlotsByDateMap, today);
+        const { status, conflictDetails } = processSlotRecurrences(
+            pSlot, dayName, startMoment, endMoment, bookedSlotsByDateMap, today
+        );
         template.status = status;
         template.conflictDetails = conflictDetails;
         return template;
     });
 };
-
 // --- createRazorpayOrderService Helpers ---
 
 const calculateRecurringCost = (selectedRecurringPatterns, tutor, student, startDate, endDate) => {
@@ -670,7 +689,7 @@ exports.createRazorpayOrderService = async (tutorId, studentId, selectedRecurrin
     return withTransaction(async (transaction) => {
         if (!userId) throw new AppError('Unauthorized access.', 401);
         validateRecurringPatterns(selectedRecurringPatterns, 'order creation');
-
+        console.log(studentId)
         const tutor = await validateTutor(tutorId, transaction, { attributes: ['id', 'int_rate', 'str_firstName', 'str_lastName', 'str_email', 'str_status'] });
         const student = await validateStudent(studentId, transaction, true);
 

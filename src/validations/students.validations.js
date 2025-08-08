@@ -57,7 +57,6 @@ const validators = {
     profitMonth: body("profitMonth").isNumeric().withMessage("Profit (monthly) must be numeric"),
     referralSource: body("referralSource").notEmpty().withMessage("Referral source cannot be empty"),
     meetingLink: body("meetingLink")
-        .isURL().withMessage("Meeting link must be a valid URL")
         .notEmpty().withMessage("Meeting link cannot be empty"),
     accountCreated: body("accountCreated").isBoolean().withMessage("Account created must be a boolean"),
     status: body("status").isIn(["active", "inactive", "paused"]).withMessage("Status must be 'active', 'inactive', or 'paused'"),

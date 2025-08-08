@@ -7,6 +7,7 @@ const AppError = require('../utils/AppError');
 const mailer = require('../utils/mailer');
 const tutorServices = require('./tutor.services');
 const { roles, userStatus, status, slotstatus, paymentstatus, tables } = require('../constants/sequelizetableconstants');
+const { createSlotService } = require('./slot.services');
 
 // --- Centralized Helper Functions ---
 
@@ -30,19 +31,32 @@ const validateStudent = async (studentId, session, requireActive = false) => {
 
 // Validate tutor existence and status
 const validateTutor = async (tutorId, session, includeWeeklyHours = false) => {
-    validateUUID(tutorId, 'tutor ID');
-    const options = { transaction: session };
+    const tutor = await db.Tutor.findByPk(tutorId, {
+        include: includeWeeklyHours
+            ? [{
+                model: db.WeeklyHourBlock,
+                as: 'weeklyHours',
+                attributes: ['str_day', 'str_start', 'str_end', 'int_start_minutes', 'int_end_minutes']
+            }]
+            : [],
+        transaction: session
+    });
+
+    if (!tutor) {
+        throw new AppError(`Tutor with ID ${tutorId} not found.`, 404);
+    }
+
+    // Format weeklyHours for compatibility with validateRecurringPattern
     if (includeWeeklyHours) {
-        options.include = [{ model: db.WeeklyHourBlock, as: 'weeklyHours' }];
+        tutor.weeklyHours = tutor.weeklyHours.map(wh => ({
+            str_day: wh.str_day,
+            arr_slots: [{
+                int_start_minutes: wh.int_start_minutes,
+                int_end_minutes: wh.int_end_minutes
+            }]
+        }));
     }
-    const tutor = await db.Tutor.findByPk(tutorId, options);
-    if (!tutor) throw new AppError('Tutor not found.', 404);
-    if (tutor.str_status !== status.ACTIVE) {
-        throw new AppError(`Tutor ${tutor.str_firstName} is not active.`, 400);
-    }
-    if (includeWeeklyHours && (!tutor.weeklyHours || tutor.weeklyHours.length === 0)) {
-        throw new AppError(`Tutor ${tutor.str_firstName} has no weekly hours defined.`, 400);
-    }
+
     return tutor;
 };
 
@@ -123,7 +137,7 @@ const createStudentUserAndSendEmail = async (firstName, lastName, email, student
 };
 
 // Format tutor name
-const formatTutorName = (tutor) => tutor ? `${tutor.str_firstName} ${tutor.str_lastName}`.trim() : 'N/A';
+const formatTutorName = (tutor) => tutor ? `${tutor.str_firstName} ${tutor.str_lastName}`.trim() : '';
 
 // Format student response (for getonestudentservice and getonewithpaginationservice)
 const formatStudentResponse = (student, includeDetails = false) => {
@@ -221,24 +235,44 @@ const validateAssignTutorInputs = (studentId, tutorId, selectedRecurringPatterns
 // Validate recurring pattern
 const validateRecurringPattern = (pattern, tutorWeeklyHours) => {
     const { dayOfWeek, startTime, endTime, durationMinutes } = pattern;
+
+    // Validate required fields
     if (!dayOfWeek || !startTime || !endTime || !durationMinutes) {
         throw new AppError('Each recurring pattern must have dayOfWeek, startTime, endTime, and durationMinutes.', 400);
     }
+
+    // Validate duration
     const duration = parseInt(durationMinutes);
     if (isNaN(duration) || duration <= 0) {
         throw new AppError(`Invalid durationMinutes for pattern ${dayOfWeek} ${startTime}.`, 400);
     }
-    const tutorDayAvailability = tutorWeeklyHours.find(d => d.str_day.toLowerCase() === dayOfWeek.toLowerCase());
-    if (!tutorDayAvailability?.arr_slots.some(block => {
+
+    // Check if tutorWeeklyHours exists and is an array
+    if (!Array.isArray(tutorWeeklyHours) || tutorWeeklyHours.length === 0) {
+        throw new AppError(`Tutor has no weekly availability defined.`, 400);
+    }
+
+    // Find matching day in tutor's weekly hours
+    const tutorDayAvailability = tutorWeeklyHours.find(d =>
+        d.str_day && d.str_day.toLowerCase() === dayOfWeek.toLowerCase()
+    );
+
+    // Check if day is found and has valid slots
+    if (!tutorDayAvailability || !Array.isArray(tutorDayAvailability.arr_slots) || tutorDayAvailability.arr_slots.length === 0) {
+        throw new AppError(`No availability defined for ${dayOfWeek} in tutor's schedule.`, 400);
+    }
+
+    // Validate pattern against tutor's availability
+    if (!tutorDayAvailability.arr_slots.some(block => {
         const patternStartMinutes = convertToMinutes(startTime);
         const patternEndMinutes = convertToMinutes(endTime);
-        return patternStartMinutes >= block.int_startMinutes && patternEndMinutes <= block.int_endMinutes;
+        return patternStartMinutes >= block.int_start_minutes && patternEndMinutes <= block.int_end_minutes;
     })) {
         throw new AppError(`Pattern ${dayOfWeek} ${startTime}-${endTime} is outside of tutor's general availability.`, 400);
     }
+
     return duration;
 };
-
 // Create recurring pattern
 const createRecurringPattern = async (pattern, studenttutor, studentStartDate, studentDischargeDate, requestingUserId, session) => {
     const { dayOfWeek, startTime, endTime, durationMinutes } = pattern;
@@ -251,10 +285,10 @@ const createRecurringPattern = async (pattern, studenttutor, studentStartDate, s
         str_startTime: startTime,
         str_endTime: endTime,
         int_durationMinutes: durationMinutes,
-        int_startMinutes: convertToMinutes(startTime),
-        int_endMinutes: convertToMinutes(endTime),
+        int_start_minutes: convertToMinutes(startTime),
+        int_end_minutes: convertToMinutes(endTime),
         obj_paymentId: studenttutor.obj_paymentId,
-        str_status: status.ACTIVE,
+        str_status: userStatus.ACTIVE,
         objectId_createdBy: requestingUserId,
         int_initialBatchSizeMonths: 3,
         dt_lastExtensionDate: moment().toDate()
@@ -313,7 +347,7 @@ const bookSlotsForPattern = async (pattern, bookedslotstudentandtutor, studentSt
             objectId_createdBy: requestingUserId
         }];
 
-        const createdSlotResult = await tutorServices.createSlotService(createSlotPayload, requestingUserId, session);
+        const createdSlotResult = await createSlotService(createSlotPayload, requestingUserId, session);
         if (createdSlotResult?.data.createdSlotIds?.length > 0) {
             bookedSlotIds.push(createdSlotResult.data.createdSlotIds[0]);
         }
@@ -548,6 +582,7 @@ exports.statuschangeservice = async (studentId, newStatus, requestingUserId) => 
 // Assign tutor and book slots
 exports.assignTutorAndBookSlotsService = async (studentId, tutorId, selectedRecurringPatterns, initialPaymentForBooking, requestingUserId, externalSession = null) => {
     return withTransaction(async (session) => {
+        console.log(studentId);
         validateAssignTutorInputs(studentId, tutorId, selectedRecurringPatterns, initialPaymentForBooking, requestingUserId);
         const student = await validateStudent(studentId, session, true);
         const tutor = await validateTutor(tutorId, session, true);

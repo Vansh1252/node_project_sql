@@ -417,7 +417,7 @@ exports.getAdminDashboard = async () => {
 };
 
 // REFRESH TOKEN
-exports.    refreshToken = async (req) => {
+exports.refreshToken = async (req) => {
     const transaction = await sequelize.transaction();
     try {
         const refreshTokenValue = req.cookies?.refreshToken;

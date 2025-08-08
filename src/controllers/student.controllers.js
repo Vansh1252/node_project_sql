@@ -63,7 +63,7 @@ exports.statuschange = catchAsync(async (req, res, next) => {
 });
 
 exports.assigntutor = catchAsync(async (req, res, next) => { 
-    const studentId = req.params.id; 
+    const studentId = req.params.studentId;
     const { tutorId, selectedRecurringPatterns, initialPaymentForBooking } = req.body;
     
     const result = await assignTutorAndBookSlotsService(studentId, tutorId, selectedRecurringPatterns, initialPaymentForBooking, req.user.id);
