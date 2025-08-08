@@ -564,37 +564,53 @@ const fetchSlots = async (filter, queryParams, includeModel, includeFields) => {
 };
 
 const formatSlots = (slotRecords, primaryEntity, primaryEntityName, primaryEntityFields) => {
-    return slotRecords.map(slot => ({
-        id: slot.id,
-        date: moment(slot.dt_date).format('YYYY-MM-DD'),
-        startTime: slot.str_start_time,
-        endTime: slot.str_end_time,
-        status: slot.str_status,
-        attendance: slot.str_attendance || 'N/A',
-        [primaryEntity.modelName]: primaryEntity
-            ? { id: slot[`${primaryEntity.modelName}.id`], name: primaryEntityName, ...primaryEntityFields }
-            : null,
-        [primaryEntity.modelName === 'tutors' ? 'student' : 'tutor']: slot[`${primaryEntity.modelName === 'tutors' ? 'students' : 'tutors'}.id`]
+    return slotRecords.map(slot => {
+        const isTutor = primaryEntity.modelName === 'tutors';
+        const otherEntityKey = isTutor ? 'students' : 'tutors';
+
+        const primaryEntityData = primaryEntity
             ? {
-                id: slot[`${primaryEntity.modelName === 'tutors' ? 'students' : 'tutors'}.id`],
-                name: `${slot[`${primaryEntity.modelName === 'tutors' ? 'students' : 'tutors'}.str_first_name`]} ${slot[`${primaryEntity.modelName === 'tutors' ? 'students' : 'tutors'}.str_last_name`]}`,
-                ...(primaryEntity.modelName === 'tutors'
+                id: slot[`${primaryEntity.modelName}.id`],
+                name: primaryEntityName,
+                ...primaryEntityFields
+            }
+            : null;
+
+        const otherEntityId = slot[`${otherEntityKey}.id`];
+        const otherEntityData = otherEntityId
+            ? {
+                id: otherEntityId,
+                name: `${slot[`${otherEntityKey}.str_first_name`]} ${slot[`${otherEntityKey}.str_last_name`]}`,
+                ...(isTutor
                     ? { studentNumber: slot['students.int_student_number'] }
                     : { email: slot['tutors.str_email'] }),
             }
-            : null,
-        createdBy: slot.object_id_created_by,
-        recurringPattern: slot['recurring_booking_patterns.id']
+            : null;
+
+        const recurringPatternId = slot['recurring_booking_patterns.id'];
+        const recurringPattern = recurringPatternId
             ? {
-                id: slot['recurring_booking_patterns.id'],
+                id: recurringPatternId,
                 dayOfWeek: slot['recurring_booking_patterns.str_day_of_week'],
                 startTime: slot['recurring_booking_patterns.str_start_time'],
                 endTime: slot['recurring_booking_patterns.str_end_time'],
             }
-            : null,
-    }));
-};
+            : null;
 
+        return {
+            id: slot.id,
+            date: moment(slot.dt_date).format('YYYY-MM-DD'),
+            startTime: slot.str_start_time,
+            endTime: slot.str_end_time,
+            status: slot.str_status,
+            attendance: slot.str_attendance || 'N/A',
+            [primaryEntity.modelName]: primaryEntityData,
+            [isTutor ? 'student' : 'tutor']: otherEntityData,
+            createdBy: slot.object_id_created_by,
+            recurringPattern
+        };
+    });
+};
 exports.getTutorConcreteSlotsService = async (tutorId, queryParams, requestingUserId) => {
     validateInputs(tutorId, 'Tutor', requestingUserId, queryParams);
 
