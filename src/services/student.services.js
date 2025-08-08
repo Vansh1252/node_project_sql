@@ -582,13 +582,3 @@ exports.assignTutorAndBookSlotsService = async (studentId, tutorId, selectedRecu
         };
     }, externalSession);
 };
-
-module.exports = {
-    createstudentservice,
-    updatestudentservice,
-    getonestudentservice,
-    getonewithpaginationservice,
-    deletestudentservice,
-    statuschangeservice,
-    assignTutorAndBookSlotsService
-};

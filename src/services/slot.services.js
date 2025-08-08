@@ -682,12 +682,3 @@ exports.createRazorpayOrderService = async (tutorId, studentId, selectedRecurrin
         };
     });
 };
-
-module.exports = {
-    createSlotService,
-    getGeneratedAvailableSlotsService,
-    getonewithpaginationservice,
-    statuschangeservice,
-    assignTutorAndBookSlotsService,
-    createRazorpayOrderService
-};
