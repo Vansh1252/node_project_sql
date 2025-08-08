@@ -4,7 +4,7 @@ const moment = require('moment');
 const { sequelize, db } = require('../utils/db');
 const AppError = require('../utils/AppError');
 const razorpay = require('../utils/razerpaysetup');
-const { tables, status, slotstatus, userStatus, paymentstatus } = require('../constants/sequelizetableconstants');
+const { tables, slotstatus, userStatus, paymentstatus } = require('../constants/sequelizetableconstants');
 const tutorServices = require('./tutor.services');
 
 // --- Centralized Utilities ---
@@ -61,7 +61,7 @@ const validateTutor = async (tutorId, transaction, options = {}) => {
     const include = options.includeWeeklyHours ? [{ model: db.WeeklyHourBlock, as: 'weeklyHours' }] : [];
     const tutor = await db.Tutor.findByPk(tutorId, { include, transaction });
     if (!tutor) throw new AppError(`Tutor with ID ${tutorId} not found.`, 404);
-    if (tutor.str_status !== status.ACTIVE) {
+    if (tutor.str_status !== userStatus.ACTIVE) {
         throw new AppError(`Tutor ${tutor.str_firstName} is not active.`, 400);
     }
     if (options.includeWeeklyHours && (!tutor.weeklyHours || tutor.weeklyHours.length === 0)) {
@@ -97,8 +97,6 @@ const withTransaction = async (fn, externalTransaction = null) => {
         if (!externalTransaction) await transaction.rollback();
         console.error(`Error in ${fn.name || 'service'}:`, error.message);
         throw error;
-    } finally {
-        if (!externalTransaction) await transaction.end();
     }
 };
 
@@ -184,8 +182,8 @@ const createSlot = async (slotData, requestingUserId, transaction) => {
 
 const generatePotentialSlots = (weeklyHourBlock, date, durationMinutes) => {
     const potentialSlots = [];
-    let currentStartMinutes = weeklyHourBlock.int_startMinutes;
-    while (currentStartMinutes + durationMinutes <= weeklyHourBlock.int_endMinutes) {
+    let currentStartMinutes = weeklyHourBlock.int_start_minutes;
+    while (currentStartMinutes + durationMinutes <= weeklyHourBlock.int_end_minutes) {
         const currentEndMinutes = currentStartMinutes + durationMinutes;
         potentialSlots.push({
             date: moment(date).format('YYYY-MM-DD'),
@@ -206,7 +204,7 @@ const fetchBookedSlots = async (tutorId, studentId, startMoment, endMoment, tran
             dt_date: { [Op.gte]: startMoment.toDate(), [Op.lte]: endMoment.toDate() },
             str_status: { [Op.in]: [slotstatus.BOOKED, slotstatus.COMPLETED] }
         },
-        attributes: ['id', 'dt_date', 'str_startTime', 'str_endTime', 'int_startMinutes', 'int_endMinutes', 'str_status', 'obj_tutor', 'obj_student'],
+        attributes: ['id', 'dt_date', 'str_startTime', 'str_endTime', 'int_start_minutes', 'int_end_minutes', 'str_status', 'obj_tutor', 'obj_student'],
         transaction
     });
     const bookedSlotsByDateMap = new Map();
@@ -292,14 +290,14 @@ const processDayAvailability = (tutor, dayName, duration, startMoment, endMoment
     const tutorDayAvailability = tutor.weeklyHours.find(day => day.str_day.toLowerCase() === dayName.toLowerCase());
     if (!tutorDayAvailability) return [];
 
-    if (tutorDayAvailability.int_startMinutes === undefined || tutorDayAvailability.int_endMinutes === undefined) {
+    if (tutorDayAvailability.int_start_minutes === undefined || tutorDayAvailability.int_end_minutes === undefined) {
         console.warn(`Tutor ${tutor.id} weekly hours block missing int_startMinutes/endMinutes for ${dayName}. Skipping.`);
         return [];
     }
 
     const block = {
-        int_startMinutes: tutorDayAvailability.int_startMinutes,
-        int_endMinutes: tutorDayAvailability.int_endMinutes
+        int_start_minutes: tutorDayAvailability.int_start_minutes,
+        int_end_minutes: tutorDayAvailability.int_end_minutes
     };
     const dummyDate = moment('2000-01-01').day(dayName);
     const potentialSlots = generatePotentialSlots(block, dummyDate.toDate(), duration);
@@ -407,7 +405,7 @@ exports.getGeneratedAvailableSlotsService = async (tutorId, studentId, durationM
             const slots = processDayAvailability(tutor, dayName, duration, startMoment, endMoment, bookedSlotsByDateMap, today);
             generatedRecurringSlotsWithStatus.push(...slots);
         }
-
+        console.log(generatedRecurringSlotsWithStatus);
         return { statusCode: 200, data: generatedRecurringSlotsWithStatus };
     });
 };
