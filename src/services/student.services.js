@@ -240,11 +240,11 @@ const validateRecurringPattern = (pattern, tutorWeeklyHours) => {
 };
 
 // Create recurring pattern
-const createRecurringPattern = async (pattern, student, tutor, studentStartDate, studentDischargeDate, paymentId, requestingUserId, session) => {
+const createRecurringPattern = async (pattern, studenttutor,studentStartDate, studentDischargeDate,requestingUserId, session) => {
     const { dayOfWeek, startTime, endTime, durationMinutes } = pattern;
     return await db.RecurringBookingPattern.create({
-        obj_tutor: tutor.id,
-        obj_student: student.id,
+        obj_tutor: studenttutor.tutorId,
+        obj_student: studenttutor.studentId,
         dt_recurringStartDate: studentStartDate.toDate(),
         dt_recurringEndDate: studentDischargeDate.toDate(),
         str_dayOfWeek: dayOfWeek,
@@ -253,7 +253,7 @@ const createRecurringPattern = async (pattern, student, tutor, studentStartDate,
         int_durationMinutes: durationMinutes,
         int_startMinutes: convertToMinutes(startTime),
         int_endMinutes: convertToMinutes(endTime),
-        obj_paymentId: paymentId,
+        obj_paymentId: studenttutor.obj_paymentId,
         str_status: status.ACTIVE,
         objectId_createdBy: requestingUserId,
         int_initialBatchSizeMonths: 3,
@@ -560,7 +560,12 @@ exports.assignTutorAndBookSlotsService = async (studentId, tutorId, selectedRecu
 
         for (const pattern of selectedRecurringPatterns) {
             validateRecurringPattern(pattern, tutor.weeklyHours);
-            const newRecurringPattern = await createRecurringPattern(pattern, student, tutor, studentStartDate, studentDischargeDate, mainPaymentRecord.id, requestingUserId, session);
+            const studenttutor = {
+                tutorId: tutor.id,
+                studentId: student.id,
+                obj_paymentId: mainPaymentRecord.id
+            }
+            const newRecurringPattern = await createRecurringPattern(pattern, studenttutor, studentStartDate, studentDischargeDate, requestingUserId, session);
             createdRecurringPatternIds.push(newRecurringPattern.id);
             const slotIds = await bookSlotsForPattern(pattern, student, tutor, studentStartDate, studentDischargeDate, newRecurringPattern.id, requestingUserId, session);
             bookedSlotIds.push(...slotIds);

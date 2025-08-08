@@ -313,75 +313,6 @@ const processDayAvailability = (tutor, dayName, duration, startMoment, endMoment
     });
 };
 
-// --- assignTutorAndBookSlotsService Helpers ---
-
-const validateRecurringPattern = (pattern, tutorWeeklyHours) => {
-    const { dayOfWeek, startTime, endTime } = pattern;
-    const tutorDayAvailability = tutorWeeklyHours.find(d => d.str_day.toLowerCase() === dayOfWeek.toLowerCase());
-    if (!tutorDayAvailability?.arr_slots.some(block => {
-        const patternStartMinutes = timeUtils.convertToMinutes(startTime);
-        const patternEndMinutes = timeUtils.convertToMinutes(endTime);
-        return patternStartMinutes >= block.int_startMinutes && patternEndMinutes <= block.int_endMinutes;
-    })) {
-        throw new AppError(`Pattern ${dayOfWeek} ${startTime}-${endTime} is outside of tutor's general availability.`, 400);
-    }
-};
-
-const createRecurringPattern = async (pattern, student, tutor, studentStartDate, studentDischargeDate, paymentId, requestingUserId, transaction) => {
-    const { dayOfWeek, startTime, endTime, durationMinutes } = pattern;
-    return await db.RecurringBookingPattern.create({
-        obj_tutor: tutor.id,
-        obj_student: student.id,
-        dt_recurringStartDate: studentStartDate.toDate(),
-        dt_recurringEndDate: studentDischargeDate.toDate(),
-        str_dayOfWeek: dayOfWeek,
-        str_startTime: startTime,
-        str_endTime: endTime,
-        int_durationMinutes: durationMinutes,
-        int_startMinutes: timeUtils.convertToMinutes(startTime),
-        int_endMinutes: timeUtils.convertToMinutes(endTime),
-        obj_paymentId: paymentId,
-        str_status: status.ACTIVE,
-        objectId_createdBy: requestingUserId,
-        int_initialBatchSizeMonths: 3,
-        dt_lastExtensionDate: moment().toDate()
-    }, { transaction });
-};
-
-const createPaymentRecord = async (initialPaymentForBooking, student, tutor, transaction) => {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, amount, transactionFee, tutorPayout } = initialPaymentForBooking;
-    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || amount === undefined || transactionFee === undefined || tutorPayout === undefined) {
-        throw new AppError('Missing essential payment details for recurring slot booking.', 400);
-    }
-    const { netAmount, profitWeek, profitMonth } = calculateProfits(amount, transactionFee, tutorPayout);
-    return await db.Payment.create({
-        str_razorpayOrderId: razorpay_order_id,
-        str_razorpayPaymentId: razorpay_payment_id,
-        str_razorpaySignature: razorpay_signature,
-        obj_studentId: student.id,
-        obj_tutorId: tutor.id,
-        obj_slotId: null,
-        int_amount: amount,
-        int_transactionFee: transactionFee,
-        int_totalAmount: netAmount,
-        int_tutorPayout: tutorPayout,
-        int_profitWeek: profitWeek,
-        int_profitMonth: profitMonth,
-        str_paymentMethod: 'Razorpay',
-        str_status: paymentstatus.COMPLETED
-    }, { transaction });
-};
-
-const assignStudentToTutor = async (student, tutor, transaction) => {
-    const oldAssignedTutorId = student.objectId_assignedTutor;
-    if (oldAssignedTutorId && oldAssignedTutorId !== tutor.id) {
-        const oldTutor = await db.Tutor.findByPk(oldAssignedTutorId, { transaction });
-        if (oldTutor) await oldTutor.removeAssignedStudent(student, { transaction });
-    }
-    await tutor.addAssignedStudent(student, { transaction });
-    await student.update({ objectId_assignedTutor: tutor.id }, { transaction });
-};
-
 // --- createRazorpayOrderService Helpers ---
 
 const calculateRecurringCost = (selectedRecurringPatterns, tutor, student, startDate, endDate) => {
@@ -569,62 +500,153 @@ exports.statuschangeservice = async (studentId, newStatus, requestingUserId) => 
     });
 };
 
-exports.assignTutorAndBookSlotsService = async (studentId, tutorId, selectedRecurringPatterns, initialPaymentForBooking, requestingUserId, externalTransaction = null) => {
-    return withTransaction(async (transaction) => {
-        if (!requestingUserId) throw new AppError('Unauthorized access.', 401);
-        validateRecurringPatterns(selectedRecurringPatterns);
-        if (!initialPaymentForBooking) throw new AppError('Payment details are required for recurring slot booking.', 400);
+// get tutor slots 
+const validateInputs = (id, type, requestingUserId, queryParams) => {
+    validateuser(requestingUserId);
 
-        const student = await validateStudent(studentId, transaction, true);
-        const tutor = await validateTutor(tutorId, transaction, { includeWeeklyHours: true });
-        await assignStudentToTutor(student, tutor, transaction);
-        const mainPaymentRecord = await createPaymentRecord(initialPaymentForBooking, student, tutor, transaction);
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(id)) {
+        throw new AppError(`Invalid ${type} ID format.`, 400);
+    }
 
-        const studentStartDate = moment(student.dt_startDate).startOf('day');
-        const studentDischargeDate = student.dt_dischargeDate ? moment(student.dt_dischargeDate).endOf('day') : moment().add(1, 'year').endOf('day');
-        const INITIAL_BOOKING_WINDOW_MONTHS = 3;
-        const initialBookingCutoffDate = moment().add(INITIAL_BOOKING_WINDOW_MONTHS, 'months').endOf('day');
+    const { startDate, endDate } = queryParams;
+    if (startDate) {
+        const startMoment = moment(startDate, 'YYYY-MM-DD', true).startOf('day');
+        if (!startMoment.isValid()) throw new AppError("Invalid startDate format. Use YYYY-MM-DD.", 400);
+    }
+    if (endDate) {
+        const endMoment = moment(endDate, 'YYYY-MM-DD', true).endOf('day');
+        if (!endMoment.isValid()) throw new AppError("Invalid endDate format. Use YYYY-MM-DD.", 400);
+    }
+};
 
-        const createdRecurringPatternIds = [];
-        const bookedSlotIds = [];
+const fetchSlots = async (filter, queryParams, includeModel, includeFields) => {
+    const { status: slotStatusFilter, startDate, endDate, page = 1, limit = 10 } = queryParams;
+    const currentPage = parseInt(page);
+    const itemsPerPage = parseInt(limit);
 
-        for (const pattern of selectedRecurringPatterns) {
-            validateRecurringPattern(pattern, tutor.weeklyHours);
-            const newRecurringPattern = await createRecurringPattern(pattern, student, tutor, studentStartDate, studentDischargeDate, mainPaymentRecord.id, requestingUserId, transaction);
-            createdRecurringPatternIds.push(newRecurringPattern.id);
-
-            const slotIds = processRecurringPattern(
-                pattern,
-                studentStartDate,
-                studentDischargeDate,
-                (slotDate, currentDayInstance) => {
-                    if (currentDayInstance.isAfter(initialBookingCutoffDate, 'day')) return null;
-                    const createSlotPayload = [{
-                        tutorId: tutor.id,
-                        date: slotDate.format('YYYY-MM-DD'),
-                        startTime: pattern.startTime,
-                        endTime: pattern.endTime,
-                        studentId: student.id,
-                        status: slotstatus.BOOKED,
-                        obj_recurringPatternId: newRecurringPattern.id
-                    }];
-                    return createSlotService(createSlotPayload, requestingUserId, transaction)
-                        .then(result => result.data.createdSlotIds[0]);
-                }
-            ).filter(id => id);
-            bookedSlotIds.push(...slotIds);
+    const where = { ...filter };
+    if (slotStatusFilter && Object.values(slotstatus).includes(slotStatusFilter)) {
+        where.str_status = slotStatusFilter;
+    }
+    if (startDate || endDate) {
+        where.dt_date = {};
+        if (startDate) {
+            where.dt_date[Op.gte] = moment(startDate, 'YYYY-MM-DD').startOf('day').toDate();
         }
-
-        if (bookedSlotIds.length > 0) {
-            await mainPaymentRecord.update({ obj_slotId: bookedSlotIds[0] }, { transaction });
+        if (endDate) {
+            where.dt_date[Op.lte] = moment(endDate, 'YYYY-MM-DD').endOf('day').toDate();
         }
+    }
 
-        return {
-            statusCode: 200,
-            message: `Successfully booked ${bookedSlotIds.length} recurring slots across ${createdRecurringPatternIds.length} patterns for ${student.str_firstName}.`,
-            data: { bookedSlotIds, totalBookedCount: bookedSlotIds.length, createdRecurringPatternIds }
-        };
-    }, externalTransaction);
+    const [total, slotRecords] = await Promise.all([
+        slots.count({ where }),
+        slots.findAll({
+            where,
+            include: [
+                {
+                    model: includeModel,
+                    attributes: includeFields,
+                },
+                {
+                    model: recurring_booking_patterns,
+                    attributes: ['id', 'str_day_of_week', 'str_start_time', 'str_end_time'],
+                },
+            ],
+            order: [['dt_date', 'ASC'], ['int_start_minutes', 'ASC']],
+            offset: (currentPage - 1) * itemsPerPage,
+            limit: itemsPerPage,
+            raw: true,
+        }),
+    ]);
+
+    return { total, slotRecords };
+};
+
+const formatSlots = (slotRecords, primaryEntity, primaryEntityName, primaryEntityFields) => {
+    return slotRecords.map(slot => ({
+        id: slot.id,
+        date: moment(slot.dt_date).format('YYYY-MM-DD'),
+        startTime: slot.str_start_time,
+        endTime: slot.str_end_time,
+        status: slot.str_status,
+        attendance: slot.str_attendance || 'N/A',
+        [primaryEntity.modelName]: primaryEntity
+            ? { id: slot[`${primaryEntity.modelName}.id`], name: primaryEntityName, ...primaryEntityFields }
+            : null,
+        [primaryEntity.modelName === 'tutors' ? 'student' : 'tutor']: slot[`${primaryEntity.modelName === 'tutors' ? 'students' : 'tutors'}.id`]
+            ? {
+                id: slot[`${primaryEntity.modelName === 'tutors' ? 'students' : 'tutors'}.id`],
+                name: `${slot[`${primaryEntity.modelName === 'tutors' ? 'students' : 'tutors'}.str_first_name`]} ${slot[`${primaryEntity.modelName === 'tutors' ? 'students' : 'tutors'}.str_last_name`]}`,
+                ...(primaryEntity.modelName === 'tutors'
+                    ? { studentNumber: slot['students.int_student_number'] }
+                    : { email: slot['tutors.str_email'] }),
+            }
+            : null,
+        createdBy: slot.object_id_created_by,
+        recurringPattern: slot['recurring_booking_patterns.id']
+            ? {
+                id: slot['recurring_booking_patterns.id'],
+                dayOfWeek: slot['recurring_booking_patterns.str_day_of_week'],
+                startTime: slot['recurring_booking_patterns.str_start_time'],
+                endTime: slot['recurring_booking_patterns.str_end_time'],
+            }
+            : null,
+    }));
+};
+
+exports.getTutorConcreteSlotsService = async (tutorId, queryParams, requestingUserId) => {
+    validateInputs(tutorId, 'Tutor', requestingUserId, queryParams);
+
+    const tutor = await tutors.findByPk(tutorId, {
+        attributes: ['str_first_name', 'str_last_name'],
+        raw: true,
+    });
+    const tutorName = tutor ? `${tutor.str_first_name} ${tutor.str_last_name}` : 'Unknown Tutor';
+
+    const { total, slotRecords } = await fetchSlots(
+        { obj_tutor: tutorId },
+        queryParams,
+        students,
+        ['id', 'str_first_name', 'str_last_name', 'int_student_number']
+    );
+
+    const formattedSlots = formatSlots(slotRecords, tutors, tutorName, { id: tutorId });
+
+    return {
+        statusCode: 200,
+        data: formattedSlots,
+        currentPage: parseInt(queryParams.page || 1),
+        totalPages: Math.ceil(total / parseInt(queryParams.limit || 10)),
+        totalRecords: total,
+    };
+};
+
+exports.getStudentConcreteSlotsService = async (studentId, queryParams, requestingUserId) => {
+    validateInputs(studentId, 'Student', requestingUserId, queryParams);
+
+    const student = await students.findByPk(studentId, {
+        attributes: ['str_first_name', 'str_last_name'],
+        raw: true,
+    });
+    const studentName = student ? `${student.str_first_name} ${student.str_last_name}` : 'Unknown Student';
+
+    const { total, slotRecords } = await fetchSlots(
+        { obj_student: studentId },
+        queryParams,
+        tutors,
+        ['id', 'str_first_name', 'str_last_name', 'str_email']
+    );
+
+    const formattedSlots = formatSlots(slotRecords, students, studentName, { id: studentId });
+
+    return {
+        statusCode: 200,
+        data: formattedSlots,
+        currentPage: parseInt(queryParams.page || 1),
+        totalPages: Math.ceil(total / parseInt(queryParams.limit || 10)),
+        totalRecords: total,
+    };
 };
 
 exports.createRazorpayOrderService = async (tutorId, studentId, selectedRecurringPatterns, userId) => {
