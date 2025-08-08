@@ -266,7 +266,6 @@ const checkSlotInstance = (pSlot, currentCheckDay, bookedSlotsByDateMap, today) 
 
 const processSlotRecurrences = (pSlot, dayName, startMoment, endMoment, bookedSlotsByDateMap, today) => {
     let hasPastConflictForAllRecurrences = false;
-    let hasActualBookingConflictForAllRecurrences = false;
     const allConflictInstancesForThisPattern = [];
 
     let currentCheckDay = moment(startMoment).day(dayName);
@@ -276,9 +275,6 @@ const processSlotRecurrences = (pSlot, dayName, startMoment, endMoment, bookedSl
         const { instanceIsPast, conflict } = checkSlotInstance(pSlot, currentCheckDay, bookedSlotsByDateMap, today);
         if (conflict) {
             allConflictInstancesForThisPattern.push(conflict);
-            if (conflict.status === slotstatus.BOOKED || conflict.status === slotstatus.COMPLETED) {
-                hasActualBookingConflictForAllRecurrences = true;
-            }
         }
         if (instanceIsPast) hasPastConflictForAllRecurrences = true;
         currentCheckDay.add(1, 'week');
