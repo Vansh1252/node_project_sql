@@ -577,10 +577,13 @@ const formatSlots = (slotRecords, primaryEntity, primaryEntityName, primaryEntit
             : null;
 
         const otherEntityId = slot[`${otherEntityKey}.id`];
+        const otherFirstNameKey = `${otherEntityKey}.str_first_name`;
+        const otherLastNameKey = `${otherEntityKey}.str_last_name`;
+
         const otherEntityData = otherEntityId
             ? {
                 id: otherEntityId,
-                name: `${slot[`${otherEntityKey}.str_first_name`]} ${slot[`${otherEntityKey}.str_last_name`]}`,
+                name: `${slot[otherFirstNameKey]} ${slot[otherLastNameKey]}`,
                 ...(isTutor
                     ? { studentNumber: slot['students.int_student_number'] }
                     : { email: slot['tutors.str_email'] }),
