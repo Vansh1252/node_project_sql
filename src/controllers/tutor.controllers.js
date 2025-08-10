@@ -17,7 +17,7 @@ exports.updatetutor = catchAsync(async (req, res, next) => {
 
 // Get One Tutor
 exports.getone = catchAsync(async (req, res, next) => { 
-    const tutorId = req.params.tutorId; 
+    const tutorId = req.params.id; 
     const result = await tutorServices.getonetutorservice(tutorId, req.user.id);
     return res.status(result.statusCode).json({ data: result.data });
 });

@@ -12,15 +12,9 @@ const { createSlotService } = require('./slot.services');
 // --- Centralized Helper Functions ---
 
 // Validate UUID format
-const validateUUID = (id, fieldName = 'ID') => {
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
-        throw new AppError(`Invalid ${fieldName} format (expected UUID).`, 400);
-    }
-};
 
 // Validate student existence and status
 const validateStudent = async (studentId, session, requireActive = false) => {
-    validateUUID(studentId, 'student ID');
     const student = await db.Student.findByPk(studentId, { transaction: session });
     if (!student) throw new AppError('Student not found.', 404);
     if (requireActive && student.str_status !== userStatus.ACTIVE) {

@@ -1,4 +1,4 @@
-const { deleteUser, getAdminDashboard, getProfile, loginUser, logoutAllDevicesService, logoutSingleDeviceService, refreshToken, registerUser, sendPasswordResetLink, setNewPassword, updatePassword, updateUser } = require('../services/user.services');
+const { deleteUser, getAdminDashboard, totalrevenueservice,getProfile, loginUser, logoutAllDevicesService, logoutSingleDeviceService, refreshToken, registerUser, sendPasswordResetLink, setNewPassword, updatePassword, updateUser } = require('../services/user.services');
 const catchAsync = require('../utils/catchAsync');
 
 // REGISTER
@@ -105,4 +105,9 @@ exports.refreshToken = catchAsync(async (req, res, next) => {
 exports.deleteUser = catchAsync(async (req, res, next) => {
     const result = await deleteUser(req.user.id);
     res.status(result.statusCode).json({ message: result.message });
+});
+
+exports.totalrevenue = catchAsync(async (req, res, next) => {
+    const result = await totalrevenueservice(req);
+    res.status(result.statusCode).json(result.data);
 });

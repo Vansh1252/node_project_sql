@@ -26,5 +26,7 @@ router.post('/reset-password', userController.setNewPassword);
 router.put('/update-password', protect, userController.updatePassword);
 router.get('/dashboard/admin', protect, restrictTo(roles.ADMIN), userController.getAdminDashboard);
 router.get('/refresh-token', userController.refreshToken);
+router.get('/total-revenue', protect, restrictTo(roles.ADMIN), userController.totalrevenue);
+
 
 module.exports = router;

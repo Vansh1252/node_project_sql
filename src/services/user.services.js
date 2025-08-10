@@ -1,6 +1,6 @@
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
-const { Op } = require('sequelize');
+const { Op,fn,col } = require('sequelize');
 const { sequelize, db } = require('../utils/db');
 const { generateToken, verifyToken } = require('../utils/genratetoken');
 const mailer = require('../utils/mailer');
@@ -145,25 +145,10 @@ exports.logoutAllDevicesService = async (refreshToken) => {
 
 // GET PROFILE
 exports.getProfile = async (userId) => {
-    validateUserId(userId);
     const transaction = await sequelize.transaction();
     try {
         const user = await db.User.findByPk(userId, {
             attributes: ['id', 'str_email', 'str_fullName', 'str_role', 'str_status', 'obj_profileId', 'str_profileType'],
-            include: [
-                {
-                    model: db.Student,
-                    as: 'studentProfile',
-                    required: false,
-                    where: { '$User.str_profileType$': tables.STUDENT, '$User.obj_profileId$': { [Op.col]: 'studentProfile.id' } },
-                },
-                {
-                    model: db.Tutor,
-                    as: 'tutorProfile',
-                    required: false,
-                    where: { '$User.str_profileType$': tables.TUTOR, '$User.obj_profileId$': { [Op.col]: 'tutorProfile.id' } },
-                },
-            ],
             transaction,
         });
 
@@ -177,7 +162,6 @@ exports.getProfile = async (userId) => {
                 fullName: user.str_fullName,
                 role: user.str_role,
                 status: user.str_status,
-                profile: profileDetails,
             },
         };
     } catch (error) {
@@ -503,4 +487,61 @@ exports.deleteUser = async (userId) => {
         console.error('Error in deleteUser service:', error);
         throw error;
     }
+};
+
+// TOTAL REVENUE 
+exports.totalrevenueservice = async (req) => {
+    const userId = req.user.id;
+    if (!userId) throw new AppError('User is not authorized', 401);
+
+    const user = await db.User.findByPk(userId);
+    if (!user) throw new AppError('User not found', 404);
+
+    const totalRevenue = await db.Payment.findOne({
+        attributes: [[fn('SUM', col('int_total_amount')), 'total']],
+        where: { str_status: paymentstatus.COMPLETED },
+        raw: true
+    });
+    const totalRevenueAmount = Number(totalRevenue?.total) || 0;
+
+    const weeklyProfit = await db.Payment.findOne({
+        attributes: [[fn('SUM', col('int_total_amount')), 'total']],
+        where: {
+            str_status: paymentstatus.COMPLETED,
+            created_at: { [Op.gte]: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
+        },
+        raw: true
+    });
+    const weeklyProfitAmount = Number(weeklyProfit?.total) || 0;
+
+    const monthlyProfit = await db.Payment.findOne({
+        attributes: [[fn('SUM', col('int_total_amount')), 'total']],
+        where: {
+            str_status: paymentstatus.COMPLETED,
+            created_at: { [Op.gte]: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
+        },
+        raw: true
+    });
+    const monthlyProfitAmount = Number(monthlyProfit?.total) || 0;
+
+    const recentPayments = await db.Payment.findAll({
+        where: { str_status: paymentstatus.COMPLETED },
+        order: [['created_at', 'DESC']],
+        limit: 10,
+        include: [
+            { model: db.Student, as: 'student', attributes: ['str_firstName', 'str_lastName'] },
+            { model: db.Tutor, as: 'tutor', attributes: ['str_firstName', 'str_lastName'] }
+        ]
+    });
+
+    return {
+        statusCode: 200,
+        message: "successful",
+        data: {
+            totalRevenueAmount,
+            weeklyProfitAmount,
+            monthlyProfitAmount,
+            recentPayments
+        }
+    };
 };

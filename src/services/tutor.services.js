@@ -6,8 +6,9 @@ const { Op } = require('sequelize'); // Import Sequelize's Operators
 const { sequelize, db } = require('../utils/db'); // Import sequelize instance and db object with models
 const mailer = require('../utils/mailer');
 const AppError = require('../utils/AppError');
-const { roles, userStatus, slotstatus, paymentstatus, tables } = require('../constants/sequelizetableconstants'); // Ensure correct constants
-const { userInfo } = require('os');
+const { roles, userStatus, slotstatus, tables } = require('../constants/sequelizetableconstants'); // Ensure correct constants
+const moment = require('moment');
+const slotService = require('../services/slot.services');
 
 const _validateAndFindTutor = async (tutorId, requestingUserId, transaction = null) => {
     if (!requestingUserId) {
@@ -242,7 +243,6 @@ exports.getonetutorservice = async (tutorId, requestingUserId) => {
     const transaction = await sequelize.transaction(); // Use transaction for consistent read
     try {
         if (!requestingUserId) throw new AppError("Unauthorized access", 401);
-
         const tutor = await db.Tutor.findByPk(tutorId, {
             include: [
                 { model: db.WeeklyHourBlock, as: 'weeklyHours' }, // Include weekly hours
@@ -271,18 +271,6 @@ exports.getonetutorservice = async (tutorId, requestingUserId) => {
             transaction // Pass transaction
         });
 
-        // --- Get Dynamically Generated Available Slots for Display Grid ---
-        const defaultDisplayDurationMinutes = 30;
-        const plannedStartDate = moment().format('YYYY-MM-DD');
-        const plannedEndDate = moment().add(3, 'months').format('YYYY-MM-DD'); // Default 3 months
-        // Assuming slotService.getGeneratedAvailableSlotsForTutorDisplayService handles its own session.
-        const dynamicallyGeneratedSlots = (await slotService.getGeneratedAvailableSlotsForTutorDisplayService(
-            tutor.id, // Tutor ID
-            { durationMinutes: defaultDisplayDurationMinutes, plannedStartDate, plannedEndDate }, // queryParams
-            requestingUserId // User ID
-        )).data; // Extract data from service response
-
-
         await transaction.commit();
         return {
             statusCode: 200,
@@ -300,14 +288,9 @@ exports.getonetutorservice = async (tutorId, requestingUserId) => {
                 rate: tutor.int_rate,
                 timezone: tutor.str_timezone,
                 status: tutor.str_status,
-
                 totalAssignedStudents: totalAssignedStudentsCount,
                 activeAssignedStudents: activeAssignedStudentsCount,
                 pausedAssignedStudents: pausedAssignedStudentsCount,
-                profitOneWeek: profitWeek,
-                profitFourWeeks: profitMonth,
-
-                availableSlotsDisplay: dynamicallyGeneratedSlots,
                 assignedStudentsDetails: assignedStudentDetails.map(s => s.toJSON()), // Convert instances to plain objects
                 payoutHistory: paymentHistory.map(p => ({
                     id: p.id,
