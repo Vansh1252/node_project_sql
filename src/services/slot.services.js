@@ -4,7 +4,7 @@ const moment = require('moment');
 const { sequelize, db } = require('../utils/db');
 const AppError = require('../utils/AppError');
 const razorpay = require('../utils/razerpaysetup');
-const { tables, slotstatus, userStatus, paymentstatus } = require('../constants/sequelizetableconstants');
+const { slotstatus, userStatus } = require('../constants/sequelizetableconstants');
 const tutorServices = require('./tutor.services');
 
 // --- Centralized Utilities ---

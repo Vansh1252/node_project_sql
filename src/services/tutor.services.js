@@ -8,7 +8,6 @@ const mailer = require('../utils/mailer');
 const AppError = require('../utils/AppError');
 const { roles, userStatus, slotstatus, tables } = require('../constants/sequelizetableconstants'); // Ensure correct constants
 const moment = require('moment');
-const slotService = require('../services/slot.services');
 
 const _validateAndFindTutor = async (tutorId, requestingUserId, transaction = null) => {
     if (!requestingUserId) {
