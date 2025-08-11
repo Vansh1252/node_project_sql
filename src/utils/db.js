@@ -6,12 +6,12 @@ const { tables, roles, userStatus, attendnace, slotstatus, paymentstatus } = req
 
 const db = {};
 const sequelize = new Sequelize(
-    process.env.DB_NAME,
-    process.env.DB_USER,
-    process.env.DB_PASSWORD,
+    process.env.MYSQLDATABASE,
+    process.env.MYSQLUSER,
+    process.env.MYSQLPASSWORD,
     {
-        host: process.env.DB_HOST,
-        port: process.env.DB_PORT,
+        host: process.env.MYSQLHOST,
+        port: process.env.MYSQLPORT,
         dialect: process.env.DB_DIALECT || 'mysql',
         logging: process.env.NODE_ENV === 'development' ? console.log : false,
         define: {
@@ -56,7 +56,7 @@ Object.keys(db).forEach(modelName => {
 const connectDB = async () => {
     try {
         // Validate environment variables
-        if (!process.env.DB_NAME || !process.env.DB_USER || !process.env.DB_HOST) {
+        if (!process.env.MYSQLDATABASE || !process.env.MYSQLUSER || !process.env.MYSQLHOST) {
             throw new Error('Missing required environment variables: DB_NAME, DB_USER, or DB_HOST');
         }
 
@@ -65,7 +65,7 @@ const connectDB = async () => {
 
         // Use { alter: true } carefully in production; migrations are preferred.
         // It will try to make necessary changes to the database to match the models.
-        // await sequelize.sync({ alter: true });
+        await sequelize.sync({ alter: true });
         console.log('Database models synchronized successfully.');
     } catch (error) {
         console.error(`Database connection failed: ${error.message}`);
