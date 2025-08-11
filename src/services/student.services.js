@@ -6,7 +6,7 @@ const { sequelize, db } = require('../utils/db');
 const AppError = require('../utils/AppError');
 const mailer = require('../utils/mailer');
 const tutorServices = require('./tutor.services');
-const { roles, userStatus, status, slotstatus, paymentstatus, tables } = require('../constants/sequelizetableconstants');
+const { roles, userStatus, slotstatus, paymentstatus, tables } = require('../constants/sequelizetableconstants');
 const { createSlotService } = require('./slot.services');
 
 // --- Centralized Helper Functions ---
@@ -666,4 +666,50 @@ exports.assignTutorAndBookSlotsService = async (studentId, tutorId, selectedRecu
             data: { bookedSlotIds, totalBookedCount: bookedSlotIds.length, createdRecurringPatternIds }
         };
     }, externalSession);
+};
+
+// student master services
+exports.studentmastesrservice = async (queryParams, userId) => {
+    const { search } = queryParams;
+
+    if (!userId) throw new AppError("Unauthorized access", 401);
+
+    // Base filter: only active students and without assigned tutor
+    let filter = {
+        str_status: userStatus.ACTIVE,
+        [Op.or]: [
+            { objectId_assignedTutor: { [Op.is]: null } }
+        ]
+    };
+
+    // If search term is provided
+    if (search) {
+        filter[Op.and] = [
+            {
+                [Op.or]: [
+                    { str_firstName: { [Op.iLike]: `%${search}%` } },
+                    { str_lastName: { [Op.iLike]: `%${search}%` } },
+                    { str_email: { [Op.iLike]: `%${search}%` } }
+                ]
+            }
+        ];
+    }
+
+    // Query students
+    const students = await db.Student.findAll({
+        where: filter,
+        include: [
+            { model: db.Tutor, as: "assignedTutor" }
+        ]
+    });
+
+    if (!students || students.length === 0) {
+        throw new AppError("No active students found matching criteria.", 404);
+    }
+
+    return {
+        statusCode: 200,
+        message: "Students fetched successfully.",
+        data: students
+    };
 };

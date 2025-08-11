@@ -1,7 +1,6 @@
 const {
     createSlotService,
-    getGeneratedAvailableSlotsService,
-    updateSlotStatusService,
+    getGeneratedAvailableSlotsService,statuschangeservice,
     getTutorConcreteSlotsService,
     getStudentConcreteSlotsService,
     createRazorpayOrderService,
@@ -38,7 +37,7 @@ exports.updateSlotStatus = catchAsync(async (req, res, next) => {
     const slotId = req.params.id;
     const { newStatus, attendanceStatus } = req.body;
     const requestingUserId = req.user.id;
-
+    console.log(slotId)
     if (!newStatus) {
         throw new AppError("New status is required.", 400);
     }
@@ -49,7 +48,7 @@ exports.updateSlotStatus = catchAsync(async (req, res, next) => {
         throw new AppError("Attendance status ('attended' or 'missed') is required when marking attendance.", 400);
     }
 
-    const result = await updateSlotStatusService(slotId, newStatus, attendanceStatus, requestingUserId);
+    const result = await statuschangeservice(slotId, newStatus, attendanceStatus, requestingUserId);
     return res.status(result.statusCode).json({ message: result.message, data: result.data });
 });
 

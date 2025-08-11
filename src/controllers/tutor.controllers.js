@@ -10,7 +10,7 @@ exports.createtutor = catchAsync(async (req, res, next) => {
 
 // Update Tutor
 exports.updatetutor = catchAsync(async (req, res, next) => { 
-    const tutorId = req.params.tutorId; 
+    const tutorId = req.params.id; 
     const result = await tutorServices.updatetutorservice(tutorId, req.body, req.user.id);
     return res.status(result.statusCode).json({ message: result.message, data: result.data });
 });

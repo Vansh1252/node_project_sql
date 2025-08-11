@@ -4,7 +4,7 @@ const moment = require('moment');
 const { sequelize, db } = require('../utils/db');
 const AppError = require('../utils/AppError');
 const razorpay = require('../utils/razerpaysetup');
-const { slotstatus, userStatus } = require('../constants/sequelizetableconstants');
+const { slotstatus, userStatus, attendnace } = require('../constants/sequelizetableconstants');
 const tutorServices = require('./tutor.services');
 
 // --- Centralized Utilities ---
@@ -492,23 +492,25 @@ exports.getonewithpaginationservice = async (queryParams, userId) => {
     });
 };
 
-exports.statuschangeservice = async (studentId, newStatus, requestingUserId) => {
+exports.statuschangeservice = async (slotId, newStatus, attendanceStatus, requestingUserId) => {
     return withTransaction(async (transaction) => {
+        console.log(slotId, newStatus, attendanceStatus)
         if (!requestingUserId) throw new AppError('Unauthorized access', 401);
-        if (![userStatus.ACTIVE, userStatus.INACTIVE, userStatus.PAUSED].includes(newStatus)) {
-            throw new AppError('Invalid status value provided.', 400);
+        const slot = await db.Slot.findOne({ where: { id: slotId }, transaction });
+        if (!slot) throw new AppError('Slot not found', 404);
+        if (newStatus !== slotstatus.COMPLETED) {
+            throw new AppError('Invalid status change', 400);
         }
-        const student = await validateStudent(studentId, transaction);
-        await student.update({ str_status: newStatus }, { transaction });
-
-        if (newStatus === userStatus.INACTIVE || newStatus === userStatus.PAUSED) {
-            await tutorServices.adjustTutorAvailability(student.id, transaction);
+        if (attendanceStatus !== attendnace.ATTENDED && attendanceStatus !== attendnace.MISSED) {
+            throw new AppError('Invalid attendance status', 400);
         }
-
+        slot.str_status = newStatus;
+        slot.str_attendance = attendanceStatus;
+        await slot.save({ transaction });
         return {
             statusCode: 200,
             message: `Student status changed to ${newStatus} successfully.`,
-            data: student.toJSON()
+            data: slot
         };
     });
 };
@@ -630,7 +632,7 @@ const formatSlots = (slotRecords, primaryEntity, primaryEntityName, primaryEntit
 exports.getTutorConcreteSlotsService = async (tutorId, queryParams, requestingUserId) => {
     validateInputs(tutorId, 'Tutor', requestingUserId, queryParams);
 
-    const tutor = await tutors.findByPk(tutorId, {
+    const tutor = await db.Tutor.findByPk(tutorId, {
         attributes: ['str_first_name', 'str_last_name'],
         raw: true,
     });
@@ -643,7 +645,7 @@ exports.getTutorConcreteSlotsService = async (tutorId, queryParams, requestingUs
         ['id', 'str_first_name', 'str_last_name', 'int_student_number']
     );
 
-    const formattedSlots = formatSlots(slotRecords, tutors, tutorName, { id: tutorId });
+    const formattedSlots = formatSlots(slotRecords, db.Tutor, tutorName, { id: tutorId });
 
     return {
         statusCode: 200,
@@ -657,7 +659,7 @@ exports.getTutorConcreteSlotsService = async (tutorId, queryParams, requestingUs
 exports.getStudentConcreteSlotsService = async (studentId, queryParams, requestingUserId) => {
     validateInputs(studentId, 'Student', requestingUserId, queryParams);
 
-    const student = await students.findByPk(studentId, {
+    const student = await db.Student.findByPk(studentId, {
         attributes: ['str_first_name', 'str_last_name'],
         raw: true,
     });
@@ -670,7 +672,7 @@ exports.getStudentConcreteSlotsService = async (studentId, queryParams, requesti
         ['id', 'str_first_name', 'str_last_name', 'str_email']
     );
 
-    const formattedSlots = formatSlots(slotRecords, students, studentName, { id: studentId });
+    const formattedSlots = formatSlots(slotRecords, db.Student, studentName, { id: studentId });
 
     return {
         statusCode: 200,
