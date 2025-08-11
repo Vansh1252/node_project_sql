@@ -8,9 +8,6 @@ const { validate } = require('../middleware/validate');
 const { roles } = require('../constants/sequelizetableconstants');
 
 
-
-// Public
-
 router.post('/create', protect, restrictTo(roles.ADMIN), createStudentValidation, validate, studentController.createstudents);
 router.put('/update/:id', protect, restrictTo(roles.ADMIN), updateStudentValidation, validate, studentController.updatestudents);
 router.get('/', protect, restrictTo(roles.ADMIN), studentController.getonewithpagination);

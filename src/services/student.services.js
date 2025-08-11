@@ -15,6 +15,7 @@ const { createSlotService } = require('./slot.services');
 
 // Validate student existence and status
 const validateStudent = async (studentId, session, requireActive = false) => {
+    console.log(studentId)
     const student = await db.Student.findByPk(studentId, { transaction: session });
     if (!student) throw new AppError('Student not found.', 404);
     if (requireActive && student.str_status !== userStatus.ACTIVE) {
@@ -410,6 +411,55 @@ exports.createstudentservice = async (studentData, requestingUserId) => {
 };
 
 // Update student
+const applyUpdatesToStudent = (student, updateData) => {
+    const {
+        studentNumber,
+        firstName,
+        lastName,
+        familyName,
+        grade,
+        year,
+        email,
+        phoneNumber,
+        address,
+        city,
+        state,
+        country,
+        startDate,
+        dischargeDate,
+        referralSource,
+        meetingLink,
+        accountCreated,
+        status // if allowed to update
+    } = updateData;
+
+    if (studentNumber !== undefined) student.int_studentNumber = studentNumber;
+    if (firstName !== undefined) student.str_firstName = firstName;
+    if (lastName !== undefined) student.str_lastName = lastName;
+    if (familyName !== undefined) student.str_familyName = familyName;
+    if (grade !== undefined) student.str_grade = grade;
+    if (year !== undefined) student.str_year = year;
+    if (email !== undefined) student.str_email = email;
+    if (phoneNumber !== undefined) student.str_phoneNumber = phoneNumber;
+    if (address !== undefined) student.str_address = address;
+    if (city !== undefined) student.str_city = city;
+    if (state !== undefined) student.str_state = state;
+    if (country !== undefined) student.str_country = country;
+
+    if (startDate !== undefined) {
+        student.dt_startDate = startDate ? moment(startDate).startOf('day').toDate() : null;
+    }
+    if (dischargeDate !== undefined) {
+        student.dt_dischargeDate = dischargeDate ? moment(dischargeDate).endOf('day').toDate() : null;
+    }
+
+    if (referralSource !== undefined) student.str_referralSource = referralSource || null;
+    if (meetingLink !== undefined) student.str_meetingLink = meetingLink || null;
+    if (accountCreated !== undefined) student.bln_accountCreated = accountCreated;
+    if (status !== undefined) student.str_status = status; // Optional: only if status can be updated
+};
+
+
 exports.updatestudentservice = async (studentId, updateData, requestingUserId) => {
     return withTransaction(async (session) => {
         if (!requestingUserId) throw new AppError('Unauthorized access', 401);

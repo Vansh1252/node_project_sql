@@ -23,7 +23,7 @@ exports.createstudents = catchAsync(async (req, res, next) => {
 
 // Update Student
 exports.updatestudents = catchAsync(async (req, res, next) => { 
-    const studentId = req.params.studentId; 
+    const studentId = req.params.id; 
     const result = await updatestudentservice(studentId, req.body, req.user.id); 
     return res.status(result.statusCode).json({ message: result.message, data: result.data });
 });

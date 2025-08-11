@@ -173,7 +173,6 @@ exports.getProfile = async (userId) => {
 
 // UPDATE PROFILE
 exports.updateUser = async (userId, updateData) => {
-    validateUserId(userId);
     const transaction = await sequelize.transaction();
     try {
         const user = await db.User.findByPk(userId, { transaction });
