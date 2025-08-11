@@ -65,7 +65,7 @@ const connectDB = async () => {
 
         // Use { alter: true } carefully in production; migrations are preferred.
         // It will try to make necessary changes to the database to match the models.
-        // await sequelize.sync({ alter: true });
+        await sequelize.sync({ alter: true });
         console.log('Database models synchronized successfully.');
     } catch (error) {
         console.error(`Database connection failed: ${error.message}`);
