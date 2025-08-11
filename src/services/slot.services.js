@@ -517,7 +517,6 @@ exports.statuschangeservice = async (slotId, newStatus, attendanceStatus, reques
 
 // get tutor slots 
 const validateInputs = (id, type, requestingUserId, queryParams) => {
-    validateuser(requestingUserId);
 
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(id)) {
@@ -535,47 +534,33 @@ const validateInputs = (id, type, requestingUserId, queryParams) => {
     }
 };
 
-const fetchSlots = async (filter, queryParams, includeModel, includeFields) => {
-    const { status: slotStatusFilter, startDate, endDate, page = 1, limit = 10 } = queryParams;
-    const currentPage = parseInt(page);
-    const itemsPerPage = parseInt(limit);
+const fetchSlots = async (filter, queryParams, includeModels, attributes) => {
+    // For example, query the database to get slots based on filter and include associations
+    const page = parseInt(queryParams.page || 1);
+    const limit = parseInt(queryParams.limit || 10);
+    const offset = (page - 1) * limit;
 
-    const where = { ...filter };
-    if (slotStatusFilter && Object.values(slotstatus).includes(slotStatusFilter)) {
-        where.str_status = slotStatusFilter;
-    }
-    if (startDate || endDate) {
-        where.dt_date = {};
-        if (startDate) {
-            where.dt_date[Op.gte] = moment(startDate, 'YYYY-MM-DD').startOf('day').toDate();
-        }
-        if (endDate) {
-            where.dt_date[Op.lte] = moment(endDate, 'YYYY-MM-DD').endOf('day').toDate();
-        }
-    }
+    // Make sure 'slots' is declared and assigned from DB query
+    const { count: total, rows: slots } = await db.Slot.findAndCountAll({
+        where: filter,
+        include: [
+            {
+                model: db.Student,
+                as: 'student', // check your association alias
+                attributes: ['str_first_name', 'str_last_name', 'str_email'],
+            },
+            {
+                model: db.Tutor,
+                as: 'tutor',  // check your association alias
+                attributes: ['str_first_name', 'str_last_name', 'str_email'],
+            }
+        ],
+        limit,
+        offset,
+        order: [['dt_date', 'DESC'], ['str_start_time', 'ASC']],
+    });
 
-    const [total, slotRecords] = await Promise.all([
-        slots.count({ where }),
-        slots.findAll({
-            where,
-            include: [
-                {
-                    model: includeModel,
-                    attributes: includeFields,
-                },
-                {
-                    model: recurring_booking_patterns,
-                    attributes: ['id', 'str_day_of_week', 'str_start_time', 'str_end_time'],
-                },
-            ],
-            order: [['dt_date', 'ASC'], ['int_start_minutes', 'ASC']],
-            offset: (currentPage - 1) * itemsPerPage,
-            limit: itemsPerPage,
-            raw: true,
-        }),
-    ]);
-
-    return { total, slotRecords };
+    return { total, slotRecords: slots };
 };
 
 const formatSlots = (slotRecords, primaryEntity, primaryEntityName, primaryEntityFields) => {
@@ -641,7 +626,7 @@ exports.getTutorConcreteSlotsService = async (tutorId, queryParams, requestingUs
     const { total, slotRecords } = await fetchSlots(
         { obj_tutor: tutorId },
         queryParams,
-        students,
+        db.Student,   // Use db.Student instead of undefined 'students'
         ['id', 'str_first_name', 'str_last_name', 'int_student_number']
     );
 
@@ -664,6 +649,13 @@ exports.getStudentConcreteSlotsService = async (studentId, queryParams, requesti
         raw: true,
     });
     const studentName = student ? `${student.str_first_name} ${student.str_last_name}` : 'Unknown Student';
+
+    // Define tutors properly (example using include for Sequelize)
+    const tutors = [{
+        model: db.Tutor,
+        attributes: ['id', 'str_first_name', 'str_last_name', 'str_email'],
+        as: 'tutor'  // If you use alias in your associations
+    }];
 
     const { total, slotRecords } = await fetchSlots(
         { obj_student: studentId },
