@@ -412,51 +412,50 @@ exports.createstudentservice = async (studentData, requestingUserId) => {
 
 // Update student
 const applyUpdatesToStudent = (student, updateData) => {
-    const {
-        studentNumber,
-        firstName,
-        lastName,
-        familyName,
-        grade,
-        year,
-        email,
-        phoneNumber,
-        address,
-        city,
-        state,
-        country,
-        startDate,
-        dischargeDate,
-        referralSource,
-        meetingLink,
-        accountCreated,
-        status // if allowed to update
-    } = updateData;
+    // Map updateData keys to student model fields
+    const fieldMap = {
+        studentNumber: 'int_studentNumber',
+        firstName: 'str_firstName',
+        lastName: 'str_lastName',
+        familyName: 'str_familyName',
+        grade: 'str_grade',
+        year: 'str_year',
+        email: 'str_email',
+        phoneNumber: 'str_phoneNumber',
+        address: 'str_address',
+        city: 'str_city',
+        state: 'str_state',
+        country: 'str_country',
+        referralSource: 'str_referralSource',
+        meetingLink: 'str_meetingLink',
+        accountCreated: 'bln_accountCreated',
+        status: 'str_status'
+    };
 
-    if (studentNumber !== undefined) student.int_studentNumber = studentNumber;
-    if (firstName !== undefined) student.str_firstName = firstName;
-    if (lastName !== undefined) student.str_lastName = lastName;
-    if (familyName !== undefined) student.str_familyName = familyName;
-    if (grade !== undefined) student.str_grade = grade;
-    if (year !== undefined) student.str_year = year;
-    if (email !== undefined) student.str_email = email;
-    if (phoneNumber !== undefined) student.str_phoneNumber = phoneNumber;
-    if (address !== undefined) student.str_address = address;
-    if (city !== undefined) student.str_city = city;
-    if (state !== undefined) student.str_state = state;
-    if (country !== undefined) student.str_country = country;
-
-    if (startDate !== undefined) {
-        student.dt_startDate = startDate ? moment(startDate).startOf('day').toDate() : null;
-    }
-    if (dischargeDate !== undefined) {
-        student.dt_dischargeDate = dischargeDate ? moment(dischargeDate).endOf('day').toDate() : null;
+    // Assign values based on the map if present in updateData
+    for (const [key, field] of Object.entries(fieldMap)) {
+        if (updateData[key] !== undefined) {
+            // For referralSource and meetingLink, convert empty strings to null
+            if ((key === 'referralSource' || key === 'meetingLink') && !updateData[key]) {
+                student[field] = null;
+            } else {
+                student[field] = updateData[key];
+            }
+        }
     }
 
-    if (referralSource !== undefined) student.str_referralSource = referralSource || null;
-    if (meetingLink !== undefined) student.str_meetingLink = meetingLink || null;
-    if (accountCreated !== undefined) student.bln_accountCreated = accountCreated;
-    if (status !== undefined) student.str_status = status; // Optional: only if status can be updated
+    // Handle dates separately for clarity
+    if ('startDate' in updateData) {
+        student.dt_startDate = updateData.startDate
+            ? moment(updateData.startDate).startOf('day').toDate()
+            : null;
+    }
+
+    if ('dischargeDate' in updateData) {
+        student.dt_dischargeDate = updateData.dischargeDate
+            ? moment(updateData.dischargeDate).endOf('day').toDate()
+            : null;
+    }
 };
 
 

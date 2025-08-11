@@ -49,62 +49,61 @@ const convertToMinutes = (timeString) => {
 
 
 const _applyUpdatesToTutor = async (tutor, updateFields, transaction) => {
-  const {
-    firstName, lastName, email, phoneNumber, address, city, province,
-    postalCode, country, rate, timezone, status: newStatus, weeklyHours
-  } = updateFields;
+    const {
+        status: newStatus, weeklyHours
+    } = updateFields;
 
-  // Map updateFields to model fields if defined
-  const fieldMap = {
-    firstName: 'str_firstName',
-    lastName: 'str_lastName',
-    email: 'str_email',
-    phoneNumber: 'str_phoneNumber',
-    address: 'str_address',
-    city: 'str_city',
-    province: 'str_province',
-    postalCode: 'str_postalCode',
-    country: 'str_country',
-    rate: 'int_rate',
-    timezone: 'str_timezone',
-  };
+    // Map updateFields to model fields if defined
+    const fieldMap = {
+        firstName: 'str_firstName',
+        lastName: 'str_lastName',
+        email: 'str_email',
+        phoneNumber: 'str_phoneNumber',
+        address: 'str_address',
+        city: 'str_city',
+        province: 'str_province',
+        postalCode: 'str_postalCode',
+        country: 'str_country',
+        rate: 'int_rate',
+        timezone: 'str_timezone',
+    };
 
-  const updatedFields = Object.entries(fieldMap).reduce((acc, [key, modelField]) => {
-    if (updateFields[key] !== undefined) acc[modelField] = updateFields[key];
-    return acc;
-  }, {});
+    const updatedFields = Object.entries(fieldMap).reduce((acc, [key, modelField]) => {
+        if (updateFields[key] !== undefined) acc[modelField] = updateFields[key];
+        return acc;
+    }, {});
 
-  // Validate and assign status if valid
-  if (newStatus && [userStatus.ACTIVE, userStatus.INACTIVE].includes(newStatus)) {
-    updatedFields.str_status = newStatus;
-  }
+    // Validate and assign status if valid
+    if (newStatus && [userStatus.ACTIVE, userStatus.INACTIVE].includes(newStatus)) {
+        updatedFields.str_status = newStatus;
+    }
 
-  await tutor.update(updatedFields, { transaction });
+    await tutor.update(updatedFields, { transaction });
 
-  // Update weekly hours blocks if present
-  if (!Array.isArray(weeklyHours)) return;
+    // Update weekly hours blocks if present
+    if (!Array.isArray(weeklyHours)) return;
 
-  // Clear existing blocks
-  await db.WeeklyHourBlock.destroy({ where: { tutorId: tutor.id }, transaction });
+    // Clear existing blocks
+    await db.WeeklyHourBlock.destroy({ where: { tutorId: tutor.id }, transaction });
 
-  // Flatten slots into blocks array
-  const newBlocks = weeklyHours.flatMap(dayObj => {
-    if (!Array.isArray(dayObj.slots)) return [];
-    return dayObj.slots
-      .filter(slot => slot.start && slot.end)
-      .map(slot => ({
-        str_day: dayObj.day,
-        str_start: slot.start,
-        str_end: slot.end,
-        int_start_minutes: convertToMinutes(slot.start),
-        int_end_minutes: convertToMinutes(slot.end),
-        tutorId: tutor.id,
-      }));
-  });
+    // Flatten slots into blocks array
+    const newBlocks = weeklyHours.flatMap(dayObj => {
+        if (!Array.isArray(dayObj.slots)) return [];
+        return dayObj.slots
+            .filter(slot => slot.start && slot.end)
+            .map(slot => ({
+                str_day: dayObj.day,
+                str_start: slot.start,
+                str_end: slot.end,
+                int_start_minutes: convertToMinutes(slot.start),
+                int_end_minutes: convertToMinutes(slot.end),
+                tutorId: tutor.id,
+            }));
+    });
 
-  if (newBlocks.length > 0) {
-    await db.WeeklyHourBlock.bulkCreate(newBlocks, { transaction });
-  }
+    if (newBlocks.length > 0) {
+        await db.WeeklyHourBlock.bulkCreate(newBlocks, { transaction });
+    }
 };
 
 // Helper to synchronize user model details with tutor updates
